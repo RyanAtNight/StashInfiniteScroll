@@ -77,6 +77,29 @@
   pointer-events: auto;
 }
 
+/* "x 3 [select all]": the selection indicator in the toolbar. It has no
+   background of its own, which is unreadable over cards. A solid pill in
+   Stash's primary blue, the colour of selected checkboxes; only colours
+   change, so its size and position stay the same. */
+.isc-pin .selected-items-info {
+  border-color: #0d5683;
+  border-radius: 3.5px;
+  background-color: #137cbd;
+  color: #fff;
+}
+
+.isc-pin .selected-items-info button.minimal {
+  color: #fff;
+}
+
+.isc-pin .selected-items-info button.minimal:hover:not(:disabled) {
+  background: #10659a;
+}
+
+.isc-pin .selected-items-info button.minimal:active:not(:disabled) {
+  background: #0d5683;
+}
+
 /* the result count, styled like the filter tags */
 .isc-count {
   padding: 0 8px;

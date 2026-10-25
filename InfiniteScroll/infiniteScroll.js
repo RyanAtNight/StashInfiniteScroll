@@ -986,12 +986,58 @@
 
   function pinListHeader(listEl, onBottom) {
     const pane = listEl.parentElement;
-    const els = PINNED_HEADER.map((sel) =>
-      Array.prototype.find.call(pane.children, (c) => c.matches(sel))
-    ).filter(Boolean);
-    if (!els.length) return undefined;
+    const find = () =>
+      PINNED_HEADER.map((sel) => Array.prototype.find.call(pane.children, (c) => c.matches(sel))).filter(Boolean);
+    if (!find().length) return undefined;
 
-    const layout = () => {
+    let els = [];
+    let frame = 0;
+    const relayout = () => {
+      if (!frame) {
+        frame = window.setTimeout(() => {
+          frame = 0;
+          layout();
+        }, 50);
+      }
+    };
+    // filter tags appearing or wrapping, the sidebar opening
+    const ro = new ResizeObserver(relayout);
+    // React rewrites an element's whole class list when its classes change
+    // (selecting items adds "has-selection" to the toolbar), which drops
+    // ours, and it can swap an element for a new one. Re-pin right away,
+    // before the next paint, so the header never visibly lets go.
+    const mo = new MutationObserver(() => {
+      const now = find();
+      if (now.length !== els.length || now.some((el, i) => el !== els[i] || !el.classList.contains("isc-pin"))) {
+        layout();
+      }
+    });
+
+    const unpin = (el) => {
+      el.classList.remove("isc-pin");
+      el.style.removeProperty("--isc-pin-top");
+    };
+
+    function layout() {
+      const next = find();
+      els.forEach((el) => {
+        if (!next.includes(el)) {
+          ro.unobserve(el);
+          unpin(el);
+        }
+      });
+      next.forEach((el) => {
+        if (!els.includes(el)) {
+          ro.observe(el);
+          mo.observe(el, { attributes: true, attributeFilter: ["class"] });
+        }
+      });
+      els = next;
+      if (!els.length) {
+        onBottom(0);
+        return;
+      }
+
       // measure where everything sits at rest
       els.forEach((el) => el.classList.remove("isc-pin"));
       const nav = navbarBottom();
@@ -1004,30 +1050,17 @@
       });
       const last = els[els.length - 1];
       onBottom(first + tops[els.length - 1] - tops[0] + last.offsetHeight);
-    };
+    }
 
     layout();
-    let frame = 0;
-    const relayout = () => {
-      if (!frame) {
-        frame = window.setTimeout(() => {
-          frame = 0;
-          layout();
-        }, 50);
-      }
-    };
-    // filter tags appearing or wrapping, the sidebar opening, window resizes
-    const ro = new ResizeObserver(relayout);
-    els.forEach((el) => ro.observe(el));
+    mo.observe(pane, { childList: true });
     window.addEventListener("resize", relayout);
     return () => {
+      mo.disconnect();
       ro.disconnect();
       window.removeEventListener("resize", relayout);
       if (frame) window.clearTimeout(frame);
-      els.forEach((el) => {
-        el.classList.remove("isc-pin");
-        el.style.removeProperty("--isc-pin-top");
-      });
+      els.forEach(unpin);
       onBottom(0);
     };
   }
