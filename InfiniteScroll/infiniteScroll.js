@@ -58,6 +58,28 @@
   // heights; only videos actually on screen play
   const VIDEO_SCREENS = 0.5;
   const MAX_ENTRIES = 40;
+  // Items fetched per request. Benchmarked on a real library, scrolling at a
+  // fast human pace with previews playing: smaller batches fall behind (each
+  // request is a round trip) and larger ones stutter when they arrive.
+  const BATCH_SIZE = 14;
+  // most batches in flight at once when scrolling outruns one at a time;
+  // browsers open about 6 connections per server, so leave some for
+  // thumbnails and previews
+  const MAX_PARALLEL = 4;
+  // how far ahead to load when scrolling fast: this many seconds of travel
+  const LEAD_SECONDS = 0.6;
+  const MAX_LEAD_SCREENS = 8;
+  // Scrolling faster than this many screen heights a second holds previews
+  // back (a card is then on screen for under about a second). Measured in
+  // screens, not pixels, so it's the same at every zoom level...
+  const FAST_SCREENS_PER_SEC = 1;
+  // ...until it has slowed down for this long
+  const SETTLE_MS = 150;
+  // a failed load is retried automatically after this long
+  const RETRY_MS = 5000;
+  // a placeholder turning back into a card is drawn within this budget per
+  // frame, so a burst of them doesn't freeze the page
+  const DRAW_BUDGET_MS = 8;
   const MAX_SIZE_CACHE = 20000;
 
   // ---------------------------------------------------------------------------
@@ -255,6 +277,130 @@
   }
 
   // ---------------------------------------------------------------------------
+  // scroll speed, shared by loading (how far ahead to fetch) and previews
+  // (held back while scrolling fast)
+
+  // holding: previews are being held back; set when scrolling turns fast and
+  // cleared only when the held previews are released (see settle)
+  const speed = { pxPerSec: 0, lastEventAt: -Infinity, fastUntil: 0, timer: 0, lastKey: null, lastY: 0, holding: false };
+  const settleListeners = new Set();
+  const lastPos = new WeakMap();
+
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      const t = e.target;
+      const pageScroll = t === document || t === document.documentElement || t === window;
+      const key = pageScroll ? document : t;
+      const y = pageScroll ? window.scrollY : t.scrollTop;
+      const now = performance.now();
+      const prev = lastPos.get(key);
+      lastPos.set(key, { y, t: now });
+      speed.lastEventAt = now;
+      speed.lastKey = key;
+      speed.lastY = y;
+      // The first event after a real pause has nothing to measure against. (A
+      // gap of a few hundred ms is usually a long frame mid-scroll, not a
+      // pause, so it still counts.)
+      if (!prev || now - prev.t > 1000) return;
+      // (displays refresh up to every ~4 ms; only guard against a zero gap)
+      const v = (Math.abs(y - prev.y) / Math.max(now - prev.t, 1)) * 1000;
+      speed.pxPerSec = speed.pxPerSec * 0.5 + v * 0.5;
+      const screen = pageScroll ? window.innerHeight : t.clientHeight || window.innerHeight;
+      if (speed.pxPerSec > screen * FAST_SCREENS_PER_SEC) {
+        speed.holding = true;
+        speed.fastUntil = now + SETTLE_MS;
+        if (!speed.timer) speed.timer = window.setTimeout(settle, SETTLE_MS + 10);
+      }
+    },
+    { capture: true, passive: true }
+  );
+
+  function settle() {
+    speed.timer = 0;
+    const wait = speed.fastUntil - performance.now();
+    if (wait > 0) {
+      speed.timer = window.setTimeout(settle, wait + 10);
+      return;
+    }
+    // A long frame delays scroll events, so a quiet spell may only mean the
+    // page was busy. Let two frames render: if scrolling continues, its
+    // events arrive in them and push fastUntil out again.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (speed.timer) return;
+        // still moving fast, even if its event hasn't been delivered yet
+        const k = speed.lastKey;
+        if (k) {
+          const y = k === document ? window.scrollY : k.scrollTop;
+          const screen = k === document ? window.innerHeight : k.clientHeight || window.innerHeight;
+          const v = (Math.abs(y - speed.lastY) / Math.max(performance.now() - speed.lastEventAt, 1)) * 1000;
+          if (v > screen * FAST_SCREENS_PER_SEC) speed.fastUntil = performance.now() + SETTLE_MS;
+        }
+        if (performance.now() < speed.fastUntil) {
+          speed.timer = window.setTimeout(settle, speed.fastUntil - performance.now() + 10);
+          return;
+        }
+        speed.pxPerSec = 0;
+        speed.holding = false;
+        speed.settles = (speed.settles || 0) + 1;
+        settleListeners.forEach((fn) => fn());
+      })
+    );
+  }
+
+  // true from when scrolling turns fast until held previews are released
+  function scrollingFast() {
+    return speed.holding;
+  }
+
+  function currentSpeed() {
+    return performance.now() - speed.lastEventAt > 600 ? 0 : speed.pxPerSec;
+  }
+
+  // Stash starts a card's preview (and its download) by calling play() as the
+  // card comes on screen. While scrolling fast that call is held, so previews
+  // flown past are never downloaded and don't compete with loading; once
+  // scrolling slows, the ones on screen then are played.
+  const nativePlay = HTMLMediaElement.prototype.play;
+  const heldPlays = new Set();
+
+  // a preview unloaded while off-screen gets its source back when played
+  function restoreSource(v) {
+    if (v.dataset && v.dataset.iscSrc && !v.getAttribute("src")) {
+      v.setAttribute("src", v.dataset.iscSrc);
+      delete v.dataset.iscSrc;
+    }
+  }
+
+  HTMLMediaElement.prototype.play = function () {
+    if (scrollingFast() && this.tagName === "VIDEO" && this.closest && this.closest(".isc-enabled")) {
+      heldPlays.add(this);
+      return Promise.resolve();
+    }
+    heldPlays.delete(this);
+    restoreSource(this);
+    return nativePlay.apply(this, arguments);
+  };
+
+  function onScreen(el) {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.bottom > 0 && r.top < window.innerHeight;
+  }
+
+  settleListeners.add(() => {
+    const vids = [...heldPlays];
+    heldPlays.clear();
+    for (const v of vids) {
+      if (v.isConnected && onScreen(v)) {
+        restoreSource(v);
+        const p = nativePlay.call(v);
+        if (p && p.catch) p.catch(() => {});
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // list state store
   //
   // One entry per list identity (field + filter without page). Entries live
@@ -297,6 +443,10 @@
     st.last = page;
     st.error = null;
     st.inflight.clear();
+    // a refresh still running belongs to the old generation and won't clear
+    // this itself; left set, it would block loading for good
+    st.refreshing = false;
+    st.refreshAgain = false;
     st.anchor = undefined;
     st.pendingAnchor = undefined;
     st.run = { first: page, last: page, starts: [0], length: undefined };
@@ -474,18 +624,31 @@
   // ---------------------------------------------------------------------------
   // loading
 
-  async function loadPage(st, page) {
-    if (st.refreshing || st.inflight.size > 0) return;
-    if (page < 1 || page > totalPages(st)) return;
-    if (page === st.last + 1) st.last = page;
-    else if (page === st.first - 1) st.first = page;
-    else return;
+  // Starts loading `page`, which must be next to the loaded range. Several
+  // pages after the range can load at once; earlier pages load one at a time.
+  // Returns whether a load started.
+  function loadPage(st, page) {
+    if (st.refreshing || st.error) return false;
+    if (page < 1 || page > totalPages(st)) return false;
+    const prepend = page === st.first - 1;
+    if (page === st.last + 1) {
+      if (st.inflight.size >= MAX_PARALLEL) return false;
+      st.last = page;
+    } else if (prepend) {
+      if (st.inflight.size > 0) return false;
+      st.first = page;
+    } else return false;
 
-    const gen = st.gen;
-    const countBefore = st.count;
     st.inflight.add(page);
     st.error = null;
     notify(st);
+    fetchPage(st, page, prepend);
+    return true;
+  }
+
+  async function fetchPage(st, page, prepend) {
+    const gen = st.gen;
+    const countBefore = st.count;
     try {
       // "no-cache" + writeQuery rather than a cached query: reading the
       // result back would merge every loaded page under this page's
@@ -509,8 +672,13 @@
       console.warn(LOG_PREFIX, "failed to load page", page, e);
       st.pendingAnchor = undefined;
       st.error = e;
-      if (page === st.last && st.last > st.first) st.last--;
-      else if (page === st.first && st.first < st.last) st.first++;
+      st.errorAt = Date.now();
+      // drop the failed page (and any after it) from the range
+      if (prepend) {
+        if (page === st.first && st.first < st.last) st.first = page + 1;
+      } else if (page > st.first && page <= st.last) {
+        st.last = page - 1;
+      }
     } finally {
       if (st.gen === gen) {
         st.inflight.delete(page);
@@ -581,6 +749,7 @@
         console.warn(LOG_PREFIX, "failed to refresh loaded pages", e);
         st.pendingAnchor = undefined;
         st.error = e;
+        st.errorAt = Date.now();
       }
     } finally {
       if (st.gen === gen) {
@@ -650,6 +819,34 @@
   function createWindowCtl() {
     const callbacks = new Map();
     let io = null;
+
+    // Placeholders waiting to turn back into cards. Drawing a card is the
+    // expensive part of scrolling, and fast scrolling brings dozens into range
+    // at once, so they're drawn a few per frame (nearest to the screen first)
+    // instead of all in one long frame.
+    const queue = new Map();
+    let frame = 0;
+    let chunk = 4;
+    const drain = () => {
+      frame = 0;
+      if (!queue.size) return;
+      const vh = window.innerHeight;
+      const order = [...queue].map(([el, draw]) => {
+        const r = el.getBoundingClientRect();
+        return { el, draw, d: r.bottom < 0 ? -r.bottom : r.top > vh ? r.top - vh : 0 };
+      });
+      order.sort((a, b) => a.d - b.d);
+      const now = order.slice(0, chunk);
+      now.forEach((x) => queue.delete(x.el));
+      const t0 = performance.now();
+      batchedUpdates(() => now.forEach((x) => x.draw()));
+      // aim each frame's share at the budget
+      const took = performance.now() - t0;
+      if (took < DRAW_BUDGET_MS * 0.6) chunk = Math.min(chunk + 2, 32);
+      else if (took > DRAW_BUDGET_MS) chunk = Math.max(1, Math.floor(chunk / 2));
+      if (queue.size) frame = requestAnimationFrame(drain);
+    };
+
     const ctl = {
       enabled: false,
       margin: undefined,
@@ -677,22 +874,34 @@
       },
       unobserve(el) {
         callbacks.delete(el);
+        queue.delete(el);
         if (io) io.unobserve(el);
       },
+      // draw this placeholder's card when there's time
+      promote(el, draw) {
+        queue.set(el, draw);
+        if (!frame) frame = requestAnimationFrame(drain);
+      },
+      cancel(el) {
+        queue.delete(el);
+      },
       // synchronous re-evaluation, used right after a programmatic scroll so the
-      // cards in view render before the next paint
+      // cards in view render before the next paint (not queued)
       recheck() {
         const vh = window.innerHeight;
         batchedUpdates(() =>
           callbacks.forEach((cb, el) => {
             const r = el.getBoundingClientRect();
-            cb(r.bottom > -WINDOW_SCREENS * vh && r.top < (WINDOW_SCREENS + 1) * vh, r);
+            cb(r.bottom > -WINDOW_SCREENS * vh && r.top < (WINDOW_SCREENS + 1) * vh, r, true);
           })
         );
       },
       destroy() {
         if (io) io.disconnect();
         io = null;
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        queue.clear();
         callbacks.clear();
         ctl.far.clear();
         ctl.latest.clear();
@@ -732,13 +941,20 @@
         if (!ctl.margin) ctl.margin = window.getComputedStyle(el).margin;
       }
       if (!enabled) return undefined;
-      ctl.observe(el, (isNear, rect) => {
-        if (!isNear) {
-          // a hidden card (e.g. inactive tab) has no size; leave it alone
-          if (!rect.width || !rect.height) return;
-          if (show) rememberSize(id, rect.width, rect.height);
+      ctl.observe(el, (isNear, rect, immediate) => {
+        if (isNear) {
+          if (show) return;
+          // placeholders turn back into cards through the queue, unless the
+          // view jumped (restoring a position) and they're needed right now
+          if (immediate) setNear(true);
+          else ctl.promote(el, () => setNear(true));
+          return;
         }
-        setNear(isNear);
+        ctl.cancel(el);
+        // a hidden card (e.g. inactive tab) has no size; leave it alone
+        if (!rect.width || !rect.height) return;
+        if (show) rememberSize(id, rect.width, rect.height);
+        setNear(false);
       });
       return () => ctl.unobserve(el);
     }, [show, enabled, id, ctl]);
@@ -803,26 +1019,55 @@
       }
     });
 
-    // load / unload within a band around the screen
+    const unload = (v) => {
+      const src = v.getAttribute("src");
+      if (!src) return;
+      v.dataset.iscSrc = src;
+      v.pause();
+      v.removeAttribute("src");
+      v.load();
+    };
+    const reload = (v) => {
+      if (!v.getAttribute("src")) {
+        v.setAttribute("src", v.dataset.iscSrc);
+        v.load();
+        if (visible.has(v)) playIfAllowed(v);
+      }
+      delete v.dataset.iscSrc;
+    };
+    // Wall videos start downloading as soon as they have a source (they use
+    // the autoplay attribute rather than play()), so while scrolling fast
+    // they are kept without one until scrolling slows
+    const startsByItself = (v) => v.autoplay || v.preload !== "none";
+    const waiting = new Set();
+    const inBand = (v) => {
+      const r = v.getBoundingClientRect();
+      const vh = window.innerHeight;
+      return r.width > 0 && r.bottom > -VIDEO_SCREENS * vh && r.top < (1 + VIDEO_SCREENS) * vh;
+    };
+    const onSettle = () => {
+      const vids = [...waiting];
+      waiting.clear();
+      for (const v of vids) if (v.isConnected && v.dataset.iscSrc && inBand(v)) reload(v);
+    };
+    settleListeners.add(onSettle);
+
+    // Load / unload within a band around the screen. Card previews (which only
+    // download once played) are left alone until they've loaded something,
+    // and get their source back only when played (see HTMLMediaElement.play
+    // above): setting a source makes the browser start a request, and doing
+    // that for every card scrolled past clogs the connections that loading
+    // needs.
     const loadIo = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           const v = e.target;
           if (!e.isIntersecting) {
-            const src = v.getAttribute("src");
-            if (src) {
-              v.dataset.iscSrc = src;
-              v.pause();
-              v.removeAttribute("src");
-              v.load();
-            }
-          } else if (v.dataset.iscSrc) {
-            if (!v.getAttribute("src")) {
-              v.setAttribute("src", v.dataset.iscSrc);
-              v.load();
-              if (visible.has(v)) playIfAllowed(v);
-            }
-            delete v.dataset.iscSrc;
+            waiting.delete(v);
+            if (startsByItself(v) || v.readyState > 0) unload(v);
+          } else if (v.dataset.iscSrc && startsByItself(v)) {
+            if (scrollingFast()) waiting.add(v);
+            else reload(v);
           }
         }
       },
@@ -843,6 +1088,11 @@
       vids.forEach((v) => {
         if (!observed.has(v)) {
           observed.add(v);
+          // a new batch arriving mid-scroll shouldn't start its downloads
+          if (scrollingFast() && startsByItself(v)) {
+            unload(v);
+            waiting.add(v);
+          }
           viewIo.observe(v);
           loadIo.observe(v);
         }
@@ -859,6 +1109,7 @@
             loadIo.unobserve(v);
             observed.delete(v);
             visible.delete(v);
+            waiting.delete(v);
           });
         });
       }
@@ -866,6 +1117,7 @@
     mo.observe(container, { childList: true, subtree: true });
     scan(container);
     return () => {
+      settleListeners.delete(onSettle);
       mo.disconnect();
       viewIo.disconnect();
       loadIo.disconnect();
@@ -963,6 +1215,12 @@
     } catch (e) {
       // replaceState is rate-limited by browsers; the next check retries
     }
+  }
+
+  function setSearchParam(search, key, value) {
+    const re = new RegExp(`([?&])${key}=[^&]*`);
+    if (re.test(search || "")) return search.replace(re, `$1${key}=${value}`);
+    return (search ? search + "&" : "?") + `${key}=${value}`;
   }
 
   function searchWithPage(search, page) {
@@ -1156,57 +1414,6 @@
     );
   }
 
-  // With pages gone, the per-page dropdown sets how many items load at a
-  // time, which isn't obvious. Like the toolbar's other unlabelled controls
-  // it explains itself with a tooltip (Stash's own Bootstrap tooltip, shown on
-  // hover with no delay). Stash's dropdown can't be patched, so this listens
-  // for the pointer entering it.
-  function PageSizeTooltip({ getPane }) {
-    const [target, setTarget] = React.useState(null);
-    const getRef = React.useRef(getPane);
-    getRef.current = getPane;
-
-    React.useEffect(() => {
-      const selectOf = (e) => {
-        const el = e.target && e.target.closest && e.target.closest(".page-size-selector select");
-        const pane = getRef.current();
-        return el && pane && pane.contains(el) ? el : null;
-      };
-      const onOver = (e) => {
-        const el = selectOf(e);
-        if (el) setTarget(el);
-      };
-      const onFocus = (e) => {
-        const el = selectOf(e);
-        if (el && el.matches(":focus-visible")) setTarget(el);
-      };
-      // leaving it, or clicking to open it
-      const onAway = (e) => {
-        if (selectOf(e)) setTarget(null);
-      };
-      document.addEventListener("mouseover", onOver);
-      document.addEventListener("focusin", onFocus);
-      document.addEventListener("mouseout", onAway);
-      document.addEventListener("focusout", onAway);
-      document.addEventListener("mousedown", onAway, true);
-      return () => {
-        document.removeEventListener("mouseover", onOver);
-        document.removeEventListener("focusin", onFocus);
-        document.removeEventListener("mouseout", onAway);
-        document.removeEventListener("focusout", onAway);
-        document.removeEventListener("mousedown", onAway, true);
-      };
-    }, []);
-
-    const { Overlay, Tooltip } = Bootstrap;
-    if (!Overlay || !Tooltip) return null;
-    return h(
-      Overlay,
-      { target, show: !!target, placement: "top" },
-      h(Tooltip, { id: "isc-page-size-tooltip" }, "Items loaded at a time")
-    );
-  }
-
   function TopLoader({ st, run, onLoad, topRef }) {
     useEntryUpdates(st);
     if (run.first <= 1) return null;
@@ -1236,8 +1443,13 @@
     const items = props[cfg.prop] || [];
     const mode = filter ? filter.displayMode : undefined;
     const detailPage = !TOP_LEVEL_LIST_PATH.test(location.pathname);
-    const wanted =
-      !!filter && filter.itemsPerPage > 0 && modeEnabled(mode) && !(detailPage && settings.disableOnDetailPages);
+    const allowed = !!filter && modeEnabled(mode) && !(detailPage && settings.disableOnDetailPages);
+    // Batches are a fixed size (BATCH_SIZE). A list that keeps its filter in
+    // the URL is switched to it first (see the effect below); until then it
+    // renders as Stash would.
+    const needsBatchSize =
+      allowed && filter.itemsPerPage !== BATCH_SIZE && urlDrivenList(location.search, filter);
+    const wanted = allowed && !needsBatchSize && filter.itemsPerPage > 0;
 
     const st = wanted ? getOrCreateEntry(cfg, items, filter) : undefined;
     const enabled = !!st;
@@ -1356,6 +1568,19 @@
       };
     }
 
+    // --- batch size --------------------------------------------------------
+
+    React.useLayoutEffect(() => {
+      if (!needsBatchSize) return;
+      // keep the same items in view: the first item of the current page lands
+      // on the page of BATCH_SIZE that contains it
+      const per = filter.itemsPerPage > 0 ? filter.itemsPerPage : BATCH_SIZE;
+      const page = Math.floor(((filter.currentPage - 1) * per) / BATCH_SIZE) + 1;
+      const loc = history.location;
+      const search = searchWithPage(setSearchParam(loc.search, "perPage", String(BATCH_SIZE)), page);
+      history.replace(Object.assign({}, loc, { search }));
+    }, [needsBatchSize, filter && filter.itemsPerPage, filter && filter.currentPage]);
+
     // --- mount / page-change handling -----------------------------------
 
     React.useLayoutEffect(() => {
@@ -1400,9 +1625,11 @@
 
       if (page === prev.page || page === st.urlPage) return;
 
-      // the page changed from outside: pagination control, keyboard, etc
+      // the page changed from outside: pagination control, keyboard, etc.
+      // (Checked against the loaded range itself: `run` falls back to just the
+      // current page when that page is outside the range.)
       st.urlPage = page;
-      if (page >= run.first && page <= run.last) {
+      if (page >= st.run.first && page <= st.run.last) {
         suppressNextScrollToTop();
         scrollToPage(page);
       } else {
@@ -1518,21 +1745,35 @@
         const bottom = sentinelRef.current;
         const top = topRef.current;
         const scroller = getScroller(itemElements(container, its.length));
-        let nearBottom;
+        // How far below the view loaded items should reach: the usual
+        // load-ahead distance, or more when scrolling fast (enough travel for a
+        // batch to arrive).
+        const screen = scroller ? scroller.clientHeight : vh;
+        const lead = Math.min(
+          MAX_LEAD_SCREENS * screen,
+          Math.max(settings.prefetchScreens * screen, currentSpeed() * LEAD_SECONDS)
+        );
+        let below;
         let nearTop;
         if (scroller) {
-          const below = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-          nearBottom = below < scroller.clientHeight * settings.prefetchScreens;
+          below = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
           nearTop = !!top && scroller.scrollTop < scroller.clientHeight * 0.5;
         } else {
-          nearBottom = !!bottom && bottom.getBoundingClientRect().top < vh * (1 + settings.prefetchScreens);
+          below = bottom ? bottom.getBoundingClientRect().top - vh : Infinity;
           nearTop = !!top && top.getBoundingClientRect().bottom > -vh * 0.5;
         }
         const idle = !s.error && !s.refreshing && s.inflight.size === 0;
 
-        // load the next page when the bottom gets close
-        if (idle && nearBottom && r.last === s.last && r.last < total) {
-          loadPage(s, s.last + 1);
+        // load ahead: as many batches as it takes to cover the shortfall, a
+        // few at a time, counting the ones already on their way
+        if (!s.error && !s.refreshing && below < lead && s.last < total) {
+          const listHeight = scroller ? scroller.scrollHeight : container.getBoundingClientRect().height;
+          const perBatch = its.length ? (listHeight / its.length) * s.perPage : screen;
+          const batches = Math.max(1, Math.ceil((lead - below) / Math.max(perBatch, 1)));
+          const onTheWay = s.last - r.last;
+          for (let i = onTheWay; i < Math.min(batches, MAX_PARALLEL); i++) {
+            if (!loadPage(s, s.last + 1)) break;
+          }
         }
 
         // load the previous page when the user scrolls up into the top
@@ -1563,8 +1804,19 @@
       };
 
       const schedule = () => {
-        if (!frame) frame = window.setTimeout(check, 50);
+        if (!frame) frame = window.setTimeout(check, 30);
       };
+      // Safety net: nothing else re-checks a list that's short enough not to
+      // scroll if a load finishes without a re-render. Also retries a failed
+      // load after a while.
+      const safety = window.setInterval(() => {
+        const s = S.st;
+        if (s && s.error && Date.now() - (s.errorAt || 0) > RETRY_MS) {
+          s.error = null;
+          notify(s);
+        }
+        schedule();
+      }, 1000);
       // listening on the document in the capture phase also catches scrolling
       // inside elements (scroll events don't bubble)
       const lastY = new WeakMap();
@@ -1596,6 +1848,7 @@
         window.removeEventListener("resize", schedule);
         window.removeEventListener("wheel", onWheel);
         if (frame) window.clearTimeout(frame);
+        window.clearInterval(safety);
         S.schedule = undefined;
       };
     }, [enabled]);
@@ -1671,8 +1924,7 @@
       }),
       h(ScrollTopButton, {
         getScroller: () => getScroller(itemElements(containerRef.current, S.items.length)),
-      }),
-      h(PageSizeTooltip, { getPane: () => containerRef.current && containerRef.current.parentElement })
+      })
     );
   }
 
@@ -1765,7 +2017,7 @@
           if (r.name === "SceneList" && r.mode === DisplayMode.Tagger) reg = r;
         }
         if (!reg || reg.selectedCount > 0) return;
-        const threshold = settings.taggerConfirmThreshold || reg.perPage;
+        const threshold = settings.taggerConfirmThreshold || 40;
         if (reg.itemCount <= threshold) return;
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -1834,5 +2086,5 @@
   install();
 
   // for troubleshooting from the browser console
-  window.InfiniteScrollDebug = { store, settings, activeLists, sizeCache };
+  window.InfiniteScrollDebug = { store, settings, activeLists, sizeCache, speed };
 })();

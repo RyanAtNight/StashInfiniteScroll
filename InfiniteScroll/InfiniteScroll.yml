@@ -41,9 +41,9 @@ settings:
     type: BOOLEAN
   prefetchScreens:
     displayName: Load-ahead distance (screens)
-    description: How many screen heights before the bottom the next page starts loading. Default 1.5.
+    description: How many screen heights before the bottom the next batch starts loading. Default 1.5. When you scroll fast it loads further ahead on its own.
     type: NUMBER
   taggerConfirmThreshold:
     displayName: Tagger confirmation threshold
-    description: In the scene tagger, "Scrape All" asks for confirmation when more than this many scenes are loaded. Default (0) is one page.
+    description: In the scene tagger, "Scrape All" asks for confirmation when more than this many scenes are loaded. Default (0) is 40.
     type: NUMBER
