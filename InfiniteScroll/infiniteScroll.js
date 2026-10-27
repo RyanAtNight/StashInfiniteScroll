@@ -1156,6 +1156,57 @@
     );
   }
 
+  // With pages gone, the per-page dropdown sets how many items load at a
+  // time, which isn't obvious. Like the toolbar's other unlabelled controls
+  // it explains itself with a tooltip (Stash's own Bootstrap tooltip, shown on
+  // hover with no delay). Stash's dropdown can't be patched, so this listens
+  // for the pointer entering it.
+  function PageSizeTooltip({ getPane }) {
+    const [target, setTarget] = React.useState(null);
+    const getRef = React.useRef(getPane);
+    getRef.current = getPane;
+
+    React.useEffect(() => {
+      const selectOf = (e) => {
+        const el = e.target && e.target.closest && e.target.closest(".page-size-selector select");
+        const pane = getRef.current();
+        return el && pane && pane.contains(el) ? el : null;
+      };
+      const onOver = (e) => {
+        const el = selectOf(e);
+        if (el) setTarget(el);
+      };
+      const onFocus = (e) => {
+        const el = selectOf(e);
+        if (el && el.matches(":focus-visible")) setTarget(el);
+      };
+      // leaving it, or clicking to open it
+      const onAway = (e) => {
+        if (selectOf(e)) setTarget(null);
+      };
+      document.addEventListener("mouseover", onOver);
+      document.addEventListener("focusin", onFocus);
+      document.addEventListener("mouseout", onAway);
+      document.addEventListener("focusout", onAway);
+      document.addEventListener("mousedown", onAway, true);
+      return () => {
+        document.removeEventListener("mouseover", onOver);
+        document.removeEventListener("focusin", onFocus);
+        document.removeEventListener("mouseout", onAway);
+        document.removeEventListener("focusout", onAway);
+        document.removeEventListener("mousedown", onAway, true);
+      };
+    }, []);
+
+    const { Overlay, Tooltip } = Bootstrap;
+    if (!Overlay || !Tooltip) return null;
+    return h(
+      Overlay,
+      { target, show: !!target, placement: "top" },
+      h(Tooltip, { id: "isc-page-size-tooltip" }, "Items loaded at a time")
+    );
+  }
+
   function TopLoader({ st, run, onLoad, topRef }) {
     useEntryUpdates(st);
     if (run.first <= 1) return null;
@@ -1620,7 +1671,8 @@
       }),
       h(ScrollTopButton, {
         getScroller: () => getScroller(itemElements(containerRef.current, S.items.length)),
-      })
+      }),
+      h(PageSizeTooltip, { getPane: () => containerRef.current && containerRef.current.parentElement })
     );
   }
 
