@@ -56,7 +56,9 @@
    controls themselves are opaque and clickable. */
 .isc-pin {
   position: sticky;
-  top: var(--isc-pin-top);
+  /* outranks Stash's own sticky "top" for a toolbar with a selection, which
+     would otherwise move the toolbar off the spot the rows below allow for */
+  top: var(--isc-pin-top) !important;
   z-index: 30;
   background: transparent !important;
   pointer-events: none;

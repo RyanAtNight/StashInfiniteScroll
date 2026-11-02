@@ -1296,10 +1296,18 @@
         return;
       }
 
-      // measure where everything sits at rest
-      els.forEach((el) => el.classList.remove("isc-pin"));
+      // Measure where everything sits at rest. Stash makes the toolbar sticky
+      // on its own while items are selected, so a toolbar stuck at the top of
+      // a scrolled list would measure far below its real spot and the rows
+      // after it would be pinned over it. Static positioning while measuring
+      // takes every sticky rule out of the picture.
+      els.forEach((el) => {
+        el.classList.remove("isc-pin");
+        el.style.setProperty("position", "static", "important");
+      });
       const nav = navbarBottom();
       const tops = els.map((el) => el.getBoundingClientRect().top + window.scrollY);
+      els.forEach((el) => el.style.removeProperty("position"));
       const gap = tops[0] - nav;
       const first = nav + (gap >= 0 && gap < PIN_MAX_GAP ? gap : 0);
       els.forEach((el, i) => {
