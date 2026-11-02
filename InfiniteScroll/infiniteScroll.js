@@ -1241,6 +1241,13 @@
   // a header starting further below the navbar than this (a list inside a
   // detail page) sticks right under the navbar instead of where it started
   const PIN_MAX_GAP = 80;
+  // Detail pages (performer, studio, tag, group) show a compact name bar
+  // under the navbar once scrolled ($sticky-detail-header-height, hidden at
+  // 576px and narrower). A list on those pages pins below it, as Stash's own
+  // sticky toolbar does, or the bar covers the toolbar.
+  const DETAIL_HEADER_HEIGHT = 50;
+  const detailHeaderSpace = (el) =>
+    el.closest(".detail-body") && !window.matchMedia("(max-width: 576px)").matches ? DETAIL_HEADER_HEIGHT : 0;
 
   function pinListHeader(listEl, onBottom) {
     const pane = listEl.parentElement;
@@ -1305,7 +1312,7 @@
         el.classList.remove("isc-pin");
         el.style.setProperty("position", "static", "important");
       });
-      const nav = navbarBottom();
+      const nav = navbarBottom() + detailHeaderSpace(pane);
       const tops = els.map((el) => el.getBoundingClientRect().top + window.scrollY);
       els.forEach((el) => el.style.removeProperty("position"));
       const gap = tops[0] - nav;
