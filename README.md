@@ -1,14 +1,28 @@
 # Infinite Scroll for Stash
 
-Replaces pagination with infinite scrolling in every Stash list: scenes, images, galleries, performers, studios, tags, groups and markers, in Grid, List, Wall and Tagger views. It also works in the lists on performer, studio, tag, group and gallery pages.
+A [Stash](https://github.com/stashapp/stash) UI plugin that replaces page buttons with infinite scrolling in every list: scenes, images, galleries, performers, studios, tags, groups and markers, in Grid, List, Wall and Tagger views. It also works in the lists on performer, studio, tag, group and gallery pages.
 
-Tested against Stash v0.31.1. The code was also checked against the development branch as of October 2026.
+## Compatibility
+
+| Stash version | Status |
+|---|---|
+| v0.32.0 | Tested |
+| Development build v0.32.0-1-g944dd694 | Tested |
+| v0.31.1 | Tested |
+| v0.30 and older | Not tested |
+
+Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. The plugin has no dependencies and doesn't need any other plugin.
+
+If a Stash update removes something the plugin relies on, that part switches itself off and Stash's normal pages are used, so the worst case is ordinary pagination rather than a broken page.
 
 ## Install
 
-1. Copy this `InfiniteScroll` folder into your Stash plugins folder (shown under Settings → System → Plugins Path).
-2. In Stash, go to Settings → Plugins and click **Reload plugins**.
-3. Reload the browser tab.
+1. Download this repository: **Code → Download ZIP** above, then unzip it (or `git clone` it).
+2. Copy the `InfiniteScroll` folder into your Stash plugins folder. Its location is shown in Stash under **Settings → System → Plugins Path** (by default a `plugins` folder next to your `config.yml`).
+3. In Stash, open **Settings → Plugins** and click **Reload plugins**. "Infinite Scroll" appears in the list.
+4. Reload the browser tab.
+
+To update, replace the folder with the new one and repeat steps 3 and 4. To uninstall, delete the folder, reload plugins and reload the tab.
 
 ## What it does
 
@@ -17,8 +31,8 @@ Tested against Stash v0.31.1. The code was also checked against the development 
 - **Keeps your place.** The page number in the address bar follows the page you're looking at.
   - Going back from a scene returns you to the same item, with everything you had loaded.
   - Reloading or opening a copied link starts at that page, with a **Load earlier results** button at the top. Scrolling up also loads the earlier pages, without the view jumping.
-  - A link from before the plugin (or with another page size) is converted to batches of 14 at the same position.
-- **The list header stays pinned.** The toolbar, filter tags, page buttons and result count stay at the top while the list scrolls under them. Nothing moves or changes size; they just stop scrolling. Behind them the background is see-through, and clicks on empty parts reach the cards underneath. The selection indicator ("✕ 3 ☑") is a solid blue pill so it stays readable.
+  - A link from before the plugin (or with another page size) is converted to batches of 14 at the same position. A link past the end of the list opens at the last results.
+- **The list header stays pinned.** The toolbar, filter tags, page buttons and result count stay at the top while the list scrolls under them. On performer, studio, tag and group pages they sit below the page's name bar. Nothing moves or changes size; they just stop scrolling. Behind them the background is see-through, and clicks on empty parts reach the cards underneath. The selection indicator ("✕ 3 ☑") is a solid blue pill so it stays readable.
 - **The page buttons show the page in view.** Pages are batches of 14. Clicking a page that's already loaded scrolls to it; any other page loads fresh from there. The bottom pagination is hidden.
 - **The count shows the total** (for example "18,397"), not a page range.
 - **A back-to-top button** appears at the bottom right once you've scrolled past the first screen. It keeps everything loaded.
@@ -29,8 +43,8 @@ Tested against Stash v0.31.1. The code was also checked against the development 
 ### Keeping the data right
 
 - **Items added or removed while you scroll** (deleting, or tagging scenes out of a "missing StashDB ID" filter) shift every later batch. When the total count changes, the plugin re-fetches everything loaded, in as few requests as possible, so nothing is skipped or shown twice. Your scroll position is kept.
-- **After a library scan**, Stash clears its data cache. The missing batches are fetched again automatically.
-- **A failed load** shows a Retry link and is also retried automatically after 5 seconds. A once-a-second check makes sure loading can't silently stop.
+- **After a library scan**, Stash clears its data cache. The missing batches are fetched again automatically. The same happens after opening a scene, which leaves Stash's cached copy of the list incomplete.
+- **A failed load** shows a Retry link and is also retried automatically after 5 seconds. A once-a-second check makes sure loading can't silently stop, including the rare case where the list doesn't pick up the last batch that arrived.
 
 ### Stash features that keep working
 
@@ -49,7 +63,7 @@ Tested against Stash v0.31.1. The code was also checked against the development 
 
 ## Settings
 
-Under Settings → Plugins → Infinite Scroll:
+Under **Settings → Plugins → Infinite Scroll**:
 
 | Setting | Default | |
 |---|---|---|
@@ -66,10 +80,18 @@ Settings take effect when you next open a page.
 ## Known limitations
 
 - **Arrow-key page shortcuts** (← / →) step from the page you arrived on, not the page in view. Use the page buttons instead.
-- **The lightbox counter on v0.31.1** counts loaded images (for example "119 / 160") rather than all results. Newer Stash versions show the full total.
+- **The lightbox counter on v0.31.1** counts loaded images (for example "31 / 42") rather than all results. v0.32.0 shows the full total.
 - **After a library scan**, the restored list can be off by a row.
 - **Browser find (Ctrl+F)** only finds text in rendered cards. Off-screen Grid cards are placeholders.
 - **Where the plugin is switched off** for a view, that view keeps the 14-per-page setting until you change it.
+
+## Troubleshooting
+
+- **Nothing changed after installing:** check that "Infinite Scroll" is listed under Settings → Plugins, then reload the browser tab with Ctrl+Shift+R so it isn't using a cached copy of Stash's page.
+- **One view or page still has page buttons:** check the Disable settings above.
+- **Something looks wrong:** open the browser console (F12). Messages from the plugin start with `[InfiniteScroll]`; a line saying "plugin disabled" means your Stash version lacks something it needs. `window.InfiniteScrollDebug` shows its state.
+
+Please [open an issue](https://github.com/RyanAtNight/StashInfiniteScroll/issues) with your Stash version, the page's address (without anything private), and what you expected to see.
 
 ## How it works
 
@@ -81,7 +103,3 @@ The plugin also patches:
 - **The card components:** the off-screen placeholders.
 - **`Pagination` and `PaginationIndex`:** the page buttons and the counter.
 - **`HTMLMediaElement.play`**, only for videos inside an infinite list, and only while scrolling fast: holding previews back.
-
-If a Stash update removes anything it relies on, that part switches off and normal pagination is used.
-
-`window.InfiniteScrollDebug` exposes the plugin's state in the browser console.

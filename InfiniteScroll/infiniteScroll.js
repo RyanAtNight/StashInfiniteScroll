@@ -1179,13 +1179,34 @@
   const loadedByRestore = !!navEntry && (navEntry.type === "reload" || navEntry.type === "back_forward");
   const mountedSinceLoad = new Set();
 
+  // The last back / forward or new-page navigation (replacements don't
+  // count). Stash re-saves a list's address as the list opens, which gives
+  // the history entry a new key, so after going back the key alone can't
+  // tell a return visit from a new one.
+  let lastNav = null;
+  let navTracked = false;
+  function trackNavigation(history) {
+    if (navTracked || !history || !history.listen) return;
+    navTracked = true;
+    history.listen((loc, action) => {
+      if (action !== "REPLACE") lastNav = { action, pathname: loc.pathname };
+    });
+  }
+
   function isReturnVisit(st, location) {
     const firstMount = !mountedSinceLoad.has(st.storageKey);
     mountedSinceLoad.add(st.storageKey);
+    // used once: a later filter change on the same page starts fresh
+    const popped = !!lastNav && lastNav.action === "POP" && lastNav.pathname === location.pathname;
+    if (popped) lastNav = null;
     if (location.key && st.keys.has(location.key)) return true;
     const saved = sessionGet(st.storageKey);
+    if (window.InfiniteScrollDebug && window.InfiniteScrollDebug.trace) {
+      console.debug(LOG_PREFIX, "return?", popped, saved && saved.search, window.location.search);
+    }
     if (!saved) return false;
     if (location.key && saved.key === location.key) return true;
+    if (popped && saved.search === window.location.search) return true;
     return loadedByRestore && firstMount && saved.search === window.location.search;
   }
 
@@ -1447,6 +1468,7 @@
   function InfiniteList({ name, cfg, props, Original }) {
     const history = ReactRouterDOM.useHistory();
     const location = ReactRouterDOM.useLocation();
+    trackNavigation(history);
     const containerRef = React.useRef(null);
     const sentinelRef = React.useRef(null);
     const topRef = React.useRef(null);
@@ -1461,9 +1483,14 @@
     const allowed = !!filter && modeEnabled(mode) && !(detailPage && settings.disableOnDetailPages);
     // Batches are a fixed size (BATCH_SIZE). A list that keeps its filter in
     // the URL is switched to it first (see the effect below); until then it
-    // renders as Stash would.
+    // renders as Stash would. A page past the end (an old link, a list that
+    // shrank) comes back empty, and Stash moves it to its last page itself;
+    // converting at the same time made the two rewrite the address back and
+    // forth until React gave up and the page went blank. So an empty later
+    // page waits for Stash's own correction first.
+    const pastEnd = filter && filter.currentPage > 1 && items.length === 0;
     const needsBatchSize =
-      allowed && filter.itemsPerPage !== BATCH_SIZE && urlDrivenList(location.search, filter);
+      allowed && !pastEnd && filter.itemsPerPage !== BATCH_SIZE && urlDrivenList(location.search, filter);
     const wanted = allowed && !needsBatchSize && filter.itemsPerPage > 0;
 
     const st = wanted ? getOrCreateEntry(cfg, items, filter) : undefined;
@@ -1690,6 +1717,25 @@
       ) {
         refreshRange(st);
       }
+
+      // The list was handed fewer items than the loaded pages hold. Opening a
+      // scene does this: Stash stores its play queue's scenes with fewer
+      // fields, so on the way back the merged pages read as incomplete and
+      // Stash fetches only the current page. Fetching the loaded range again
+      // fills them in; the remembered position is re-applied when they arrive.
+      // Once per shortfall, so a range that can't be filled doesn't loop.
+      const short =
+        st.first < st.last &&
+        st.run &&
+        items.length < st.run.length &&
+        filter.currentPage >= st.first &&
+        filter.currentPage <= st.last;
+      if (!short) {
+        st.shortRefreshed = false;
+      } else if (!st.shortRefreshed && !st.refreshing && st.inflight.size === 0 && !st.error) {
+        st.shortRefreshed = true;
+        refreshRange(st);
+      }
     });
 
     // --- registry ---------------------------------------------------------
@@ -1749,6 +1795,13 @@
       let frame = 0;
       let upIntent = 0;
       let lastSave = 0;
+      let saved = null;
+      let staleSince = 0;
+      const save = (s, anchor) => {
+        lastSave = Date.now();
+        saved = anchor;
+        sessionSet(s.storageKey, anchor);
+      };
 
       const check = () => {
         frame = 0;
@@ -1779,6 +1832,38 @@
         }
         const idle = !s.error && !s.refreshing && s.inflight.size === 0;
 
+        // Safety net: when several batches land together, Apollo now and then
+        // fails to hand the last merged result to the list, which then shows
+        // fewer items than the cache holds and "End of results" too early.
+        // If that lasts past one check, have the query report again.
+        if (idle && its.length < s.run.length) {
+          const cfg = LISTS[S.name];
+          const oq = cfg && findListQuery(cfg, its, f);
+          let held = 0;
+          try {
+            held = oq.getCurrentResult().data[cfg.field][cfg.itemsKey].length;
+          } catch (e) {
+            held = 0;
+          }
+          if (held > its.length) {
+            if (staleSince && Date.now() - staleSince > 700) {
+              staleSince = 0;
+              try {
+                oq.resetLastResults();
+                Promise.resolve(oq.reobserve()).catch(() => {});
+              } catch (e) {
+                // older Apollo without these: the next batch re-renders anyway
+              }
+            } else if (!staleSince) {
+              staleSince = Date.now();
+            }
+          } else {
+            staleSince = 0;
+          }
+        } else {
+          staleSince = 0;
+        }
+
         // load ahead: as many batches as it takes to cover the shortfall, a
         // few at a time, counting the ones already on their way
         if (!s.error && !s.refreshing && below < lead && s.last < total) {
@@ -1803,11 +1888,10 @@
         const anchor = captureAnchor();
         if (!anchor) return;
         s.anchor = anchor;
-        const now = Date.now();
-        if (now - lastSave > 400) {
-          lastSave = now;
-          sessionSet(s.storageKey, anchor);
-        }
+        // throttled, but a new page is saved at once: the saved position has
+        // to match the address bar's page, or coming back to this address
+        // doesn't count as a return
+        if (Date.now() - lastSave > 400 || !saved || saved.page !== anchor.page) save(s, anchor);
         const reg = regRef.current;
         if (reg && reg.viewPage !== anchor.page) {
           reg.viewPage = anchor.page;
@@ -1865,6 +1949,9 @@
         if (frame) window.clearTimeout(frame);
         window.clearInterval(safety);
         S.schedule = undefined;
+        // leaving (opening an item): keep the very latest position
+        const s = S.st;
+        if (s && s.anchor && s.anchor !== saved && !s.restoring) save(s, s.anchor);
       };
     }, [enabled]);
 
