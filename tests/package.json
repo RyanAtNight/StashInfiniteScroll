@@ -1,0 +1,14 @@
+{
+  "name": "infinite-scroll-tests",
+  "private": true,
+  "type": "module",
+  "description": "Browser checks for the Infinite Scroll Stash plugin, run against throwaway Stash instances",
+  "scripts": {
+    "start": "node sandbox.mjs start",
+    "stop": "node sandbox.mjs stop",
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
