@@ -1,7 +1,7 @@
 // Records the README demo: the scene Wall in a sandbox Stash filled by
 // make-demo-media.mjs, scrolled at an easy pace to the end and back to top.
 //   node record-demo.mjs <port> [outdir]
-// Writes demo.gif and demo.mp4 to outdir (default .sandbox/demo). Headless; ffmpeg runs hidden.
+// Writes demo.avif, demo.gif and demo.mp4 to outdir (default .sandbox/demo). Headless; ffmpeg runs hidden.
 import { chromium } from "playwright-core";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -97,5 +97,9 @@ const run = (args) => execFileSync(ffmpeg, ["-v", "error", "-y", ...args], { win
 // film footage makes big GIFs: these defaults keep it under GitHub's 10 MB, played 1.4x faster
 const gifW = Number(process.env.GIF_WIDTH || 560), fps = Number(process.env.GIF_FPS || 8), colors = Number(process.env.GIF_COLORS || 64), speed = Number(process.env.GIF_SPEED || 1.4);
 run(["-f", "concat", "-safe", "0", "-i", list, "-vf", `setpts=PTS/${speed},fps=${fps},scale=${gifW}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=${colors}:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle`, join(outDir, "demo.gif")]);
+// animated AVIF: about 1.3 MB for the same clip at 800 px and 12 fps, so the README loads fast;
+// the GIF stays as the fallback for browsers without animated AVIF
+run(["-f", "concat", "-safe", "0", "-i", list, "-vf", `setpts=PTS/${speed},fps=12,scale=800:-2:flags=lanczos,format=yuv420p`,
+  "-c:v", "libsvtav1", "-crf", "44", "-preset", "5", "-f", "avif", "-loop", "0", join(outDir, "demo.avif")]);
 run(["-f", "concat", "-safe", "0", "-i", list, "-vf", "fps=30,scale=960:-2,format=yuv420p", "-c:v", "libx264", "-crf", "28", "-preset", "slow", "-movflags", "+faststart", join(outDir, "demo.mp4")]);
 console.log(`${shots.length} frames over ${((shots.at(-1).t - shots[0].t) / 1000).toFixed(1)} s -> ${outDir}`);

@@ -33,7 +33,7 @@ The README's demo shows the scene Wall in a sandbox filled with 168 eight-second
 ```sh
 node make-demo-media.mjs .sandbox/demo/src .sandbox/demo/media
 SANDBOX_DIR=.sandbox/demo node sandbox.mjs start v0.32.0 9931   # leave running
-node record-demo.mjs 9931                                        # writes .sandbox/demo/demo.gif and demo.mp4
+node record-demo.mjs 9931                                        # writes .sandbox/demo/demo.avif, demo.gif and demo.mp4
 ```
 
 ## What's checked
