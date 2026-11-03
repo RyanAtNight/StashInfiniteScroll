@@ -17,6 +17,20 @@ If a Stash update removes something the plugin relies on, that part switches its
 
 ## Install
 
+### From inside Stash (recommended)
+
+1. In Stash, open **Settings → Plugins**, scroll to **Available Plugins** and click **Add Source**.
+2. Enter any name (for example `Infinite Scroll`) and this URL, then confirm:
+   ```
+   https://ryanatnight.github.io/StashInfiniteScroll/main/index.yml
+   ```
+3. Expand the new source, tick **Infinite Scroll** and click **Install**.
+4. Reload the browser tab.
+
+Updates then show up under **Installed Plugins → Check for Updates**, and you can uninstall from there too.
+
+### By hand
+
 1. Download this repository: **Code → Download ZIP** above, then unzip it (or `git clone` it).
 2. Copy the `InfiniteScroll` folder into your Stash plugins folder. Its location is shown in Stash under **Settings → System → Plugins Path** (by default a `plugins` folder next to your `config.yml`).
 3. In Stash, open **Settings → Plugins** and click **Reload plugins**. "Infinite Scroll" appears in the list.
