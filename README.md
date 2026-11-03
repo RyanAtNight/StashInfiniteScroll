@@ -2,6 +2,10 @@
 
 A [Stash](https://github.com/stashapp/stash) UI plugin that replaces page buttons with infinite scrolling in every list: scenes, images, galleries, performers, studios, tags, groups and markers, in Grid, List, Wall and Tagger views. It also works in the lists on performer, studio, tag, group and gallery pages.
 
+![Scrolling the scene Wall: 168 scenes load in batches of 14 while every preview keeps playing, the page buttons follow along, then back to top](docs/demo.gif)
+
+<sub>Demo library: clips from Blender Studio's open movies Big Buck Bunny, Elephants Dream and Tears of Steel (© Blender Foundation, CC BY 3.0, Elephants Dream CC BY 2.5; [studio.blender.org/films](https://studio.blender.org/films/)). Played at 1.4× speed.</sub>
+
 ## Compatibility
 
 | Stash version | Status |
