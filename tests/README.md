@@ -13,12 +13,14 @@ Browser checks for the plugin, run against throwaway Stash instances that have o
 ```sh
 cd tests
 npm install
-node sandbox.mjs start v0.32.0 9912     # downloads that Stash release once, fills a test library
-node test.mjs 9912 v0.32.0              # prints PASS / FAIL per check
-node sandbox.mjs stop
+node sandbox.mjs run v0.32.0 9912       # downloads that release once, fills a test library, runs every check, stops
 ```
 
-Use `develop` as the version for the latest development build. Several versions can run side by side on different ports. After changing the plugin, `node sandbox.mjs reload <port>` copies it in again without rebuilding the sandbox.
+Use `develop` as the version for the latest development build. It prints PASS or FAIL per check and exits with an error if any fail.
+
+To poke at a sandbox yourself, `node sandbox.mjs start v0.32.0 9912` keeps it running at `http://127.0.0.1:9912` until you press Ctrl+C. Meanwhile `node test.mjs 9912` runs the checks against it, and after changing the plugin `node sandbox.mjs reload 9912` copies it in again. Several versions can run side by side on different ports.
+
+Nothing opens a window while it runs: the sandbox Stash and everything it starts (ffmpeg while scanning) run hidden, and the browser is headless.
 
 `ONLY=<regex>` runs just the matching checks (for example `ONLY="back from"`), and `TRACE=1` prints the plugin's own trace. Reports are written to `.sandbox/report-<label>.json`, with any console errors and which check they happened in.
 

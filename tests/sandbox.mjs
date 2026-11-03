@@ -1,6 +1,7 @@
 // Throwaway Stash instances for testing the plugin, isolated from any real install.
 //
-//   node sandbox.mjs start <version> <port>   download (once), configure, fill and start
+//   node sandbox.mjs run <version> <port>     start one, run every check (test.mjs), stop
+//   node sandbox.mjs start <version> <port>   download (once), configure, fill and keep it running
 //   node sandbox.mjs stop                      stop every sandbox instance
 //   node sandbox.mjs reload <port>             copy the plugin in again and reload plugins
 //
@@ -96,8 +97,12 @@ async function start(version, port) {
   // every ffmpeg / ffprobe it runs while scanning opens a console window of its
   // own. With windowsHide it gets a hidden console, which those share.
   const child = spawn(exe, ["--config", join(cfg, "config.yml"), "--nobrowser"], { cwd: cfg, stdio: "ignore", windowsHide: true });
-  child.unref();
   writeFileSync(join(cfg, "pid"), String(child.pid));
+  // a hidden-console child lives only as long as this script, so start stays
+  // running (Ctrl+C or "stop" ends it) and "run" does everything in one go
+  const end = () => { try { child.kill(); } catch (e) { /* gone */ } rmSync(join(cfg, "pid"), { force: true }); };
+  process.on("SIGINT", () => { end(); process.exit(130); });
+  process.on("exit", end);
   for (let i = 0; ; i++) {
     try {
       const d = await gql(port, "{ systemStatus { status } version { version } }");
@@ -129,7 +134,15 @@ async function reload(port) {
 }
 
 const [cmd, a, b] = process.argv.slice(2);
-if (cmd === "start") await start(a, b);
-else if (cmd === "stop") stop();
+if (cmd === "start") {
+  await start(a, b);
+  console.log("running; press Ctrl+C to stop it");
+  setInterval(() => {}, 1 << 30);
+} else if (cmd === "run") {
+  await start(a, b);
+  const t = spawn(process.execPath, [join(here, "test.mjs"), b, a], { stdio: "inherit", windowsHide: true, env: process.env });
+  const code = await new Promise((r) => t.on("exit", r));
+  process.exit(code ?? 1);
+} else if (cmd === "stop") stop();
 else if (cmd === "reload") await reload(a);
-else console.log("usage: node sandbox.mjs start <version> <port> | stop | reload <port>");
+else console.log("usage: node sandbox.mjs run <version> <port> | start <version> <port> | stop | reload <port>");
