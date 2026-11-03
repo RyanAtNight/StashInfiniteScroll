@@ -26,6 +26,16 @@ Nothing opens a window while it runs: the sandbox Stash and everything it starts
 
 The test library is 90 short videos, 120 images (3 of its folders become galleries), 40 performers, 20 studios, 40 tags, 18 groups and 40 markers. The first studio, performer, tag and group hold most of it, so their pages need several batches.
 
+## Demo recording
+
+The README's demo shows the scene Wall in a sandbox filled with 168 eight-second clips cut from Blender's open movies (Big Buck Bunny, Elephants Dream, Tears of Steel; CC BY, https://studio.blender.org/films/). Download the three files listed in `make-demo-media.mjs` into `.sandbox/demo/src`, then:
+
+```sh
+node make-demo-media.mjs .sandbox/demo/src .sandbox/demo/media
+SANDBOX_DIR=.sandbox/demo node sandbox.mjs start v0.32.0 9931   # leave running
+node record-demo.mjs 9931                                        # writes .sandbox/demo/demo.gif and demo.mp4
+```
+
 ## What's checked
 
 1. Every list type and the lists on studio, performer, tag, group and gallery pages load all their items, without duplicates, with the end marker, the page number in the address bar, and a pinned toolbar that stays clickable (below the name bar on detail pages).
