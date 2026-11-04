@@ -28,10 +28,10 @@ The test library is 90 short videos, 120 images (3 of its folders become galleri
 
 ## Demo recording
 
-The README's demo shows the scene Wall in a sandbox filled with 168 eight-second clips cut from Blender's open movies (Big Buck Bunny, Elephants Dream, Tears of Steel; CC BY, https://studio.blender.org/films/). Download the three files listed in `make-demo-media.mjs` into `.sandbox/demo/src`, then:
+The README's demo shows the scene Wall in a sandbox filled with 168 eight-second clips cut from Blender's open movies (Big Buck Bunny, Elephants Dream, Tears of Steel; CC BY, https://studio.blender.org/films/). Download the three films listed in `make-demo-media.mjs` into a folder of your choice, saved under the file names listed there (one folder can serve several projects), then:
 
 ```sh
-node make-demo-media.mjs .sandbox/demo/src .sandbox/demo/media
+node make-demo-media.mjs <films folder> .sandbox/demo/media
 SANDBOX_DIR=.sandbox/demo node sandbox.mjs start v0.32.0 9931   # leave running
 node record-demo.mjs 9931                                        # writes .sandbox/demo/demo.avif, demo.gif and demo.mp4
 ```

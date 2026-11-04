@@ -10,11 +10,11 @@ import { join, resolve } from "node:path";
 
 // file, title, and the stretch to cut from (seconds), skipping titles and credits
 export const FILMS = [
-  { file: "BigBuckBunny_640x360.m4v", title: "Big Buck Bunny", from: 25, to: 480,
+  { file: "big-buck-bunny-640x360.m4v", title: "Big Buck Bunny", from: 25, to: 480,
     url: "https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_640x360.m4v.zip" },
-  { file: "ed.mov", title: "Elephants Dream", from: 30, to: 572,
+  { file: "elephants-dream-480p.mov", title: "Elephants Dream", from: 30, to: 572,
     url: "https://download.blender.org/ED/elephantsdream-480-h264-st-aac.mov" },
-  { file: "tos.mov", title: "Tears of Steel", from: 30, to: 580,
+  { file: "tears-of-steel-720p.mov", title: "Tears of Steel", from: 30, to: 580,
     url: "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov" },
 ];
 
