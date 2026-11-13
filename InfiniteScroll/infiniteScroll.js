@@ -2237,25 +2237,42 @@
     //
     // An "after" patch gets the component's arguments followed by the result,
     // joined with concat, so an array result arrives spread out (or not at
-    // all, if empty). A "before" patch notes the arguments, so the result can
-    // be told apart from them even when another plugin changed their number.
+    // all, if empty), and other plugins' "before" patches can change how many
+    // arguments there are. A "before" patch of ours notes the arguments, so
+    // the result can be split off exactly. It only sees the final arguments if
+    // it runs last, so when a "before" patch registered after it changes them,
+    // another one is added (now last) and, for that render, React's second
+    // argument is told apart from the result by what it looks like.
     const cardArgs = {};
-    for (const name of CARD_COMPONENTS) {
-      cardArgs[name] = [];
+    const recorders = {};
+    const addRecorder = (name) => {
+      recorders[name] = (recorders[name] || 0) + 1;
       api.patch.before(name, function (...args) {
-        const stack = cardArgs[name];
-        // a render that threw between the two patches leaves an entry behind
-        if (stack.length > 20) stack.length = 0;
-        stack.push(args);
+        cardArgs[name] = args;
         return args;
       });
+    };
+    // React's second argument: legacy context, a plain object, or nothing
+    const looksLikeContext = (v) =>
+      v === undefined || (v !== null && typeof v === "object" && !Array.isArray(v) && !React.isValidElement(v));
+    const cardResult = (name, all) => {
+      const args = cardArgs[name];
+      cardArgs[name] = undefined;
+      let parts;
+      if (args && args.length <= all.length && args.every((a, i) => all[i] === a)) {
+        parts = all.slice(args.length);
+      } else {
+        if (recorders[name] < 3) addRecorder(name);
+        const rest = all.slice(1);
+        parts = rest.length && looksLikeContext(rest[0]) ? rest.slice(1) : rest;
+      }
+      return parts.length === 1 ? parts[0] : parts;
+    };
+    for (const name of CARD_COMPONENTS) {
+      addRecorder(name);
       api.patch.after(name, function (...all) {
         const props = all[0];
-        const args = cardArgs[name].pop();
-        // React passes two arguments, if a later "before" patch changed them
-        const n = args && args.length <= all.length && args.every((a, i) => all[i] === a) ? args.length : 2;
-        const parts = all.slice(n);
-        const rendered = parts.length === 1 ? parts[0] : parts;
+        const rendered = cardResult(name, all);
         const ctl = React.useContext(WindowCtx);
         if (!ctl) return rendered;
         const id = cardId(props);

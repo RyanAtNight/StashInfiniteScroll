@@ -7,7 +7,10 @@
 //                 reverse id order, and lowercase sorts after uppercase).
 //   iscTestAfter  on SceneCard a "before" patch passing props alone and an
 //                 "after" patch returning an array (the card plus a badge);
-//                 on PerformerCard an "after" patch returning [] (no card).
+//                 on PerformerCard an "after" patch returning [] (no card);
+//                 on GalleryCard an array result. PerformerCard and
+//                 GalleryCard also get a "before" patch passing props alone,
+//                 registered after Infinite Scroll.
 //                 Also loads before Infinite Scroll.
 //   iscTestLater  registers "instead" patches after Infinite Scroll, written
 //                 the way Stash's docs show: (props, _, Original).
@@ -64,6 +67,19 @@ const STANDINS = {
   api.patch.after("PerformerCard", function () {
     return [];
   });
+  api.patch.after("GalleryCard", function (props, ...rest) {
+    const result = rest[rest.length - 1];
+    return [
+      React.cloneElement(result, { key: "card" }),
+      h("span", { key: "badge", className: "isc-test-badge", style: { position: "absolute" } }),
+    ];
+  });
+  // "before" patches passing props alone, registered after Infinite Scroll's
+  const late = () => {
+    if (!window.InfiniteScrollDebug) return setTimeout(late, 20);
+    for (const n of ["PerformerCard", "GalleryCard"]) api.patch.before(n, (props) => [props]);
+  };
+  late();
 })();`,
   iscTestLater: `(function () {
   const api = window.PluginApi, h = api.React.createElement;
@@ -191,34 +207,34 @@ try {
     const newTitle = "Renamed " + Date.now();
     await gql(`mutation($id: ID!) { imageUpdate(input: { id: $id, title: "Has a title" }) { id } }`, { id: img.id });
     try {
-    const { page, errors, crashed } = await open(`/images/${img.id}`, { wrapCards: true, ready: ".image-tabs" });
-    await page.waitForSelector(".performer-card", { timeout: 10000 }).catch(() => {});
-    const card = await page.evaluate(() => { window.__iscCard = document.querySelector(".performer-card"); return !!window.__iscCard; });
-    // what the user did: open Edit, change the title, save, then back to Details
-    const steps = [];
-    const step = async (name, fn) => {
-      if (await crashed()) return;
-      try { await fn(); steps.push(name); } catch (e) { steps.push(name + " failed: " + String(e.message).split("\n")[0]); }
-      await page.waitForTimeout(800);
-    };
-    await step("edit tab", async () => {
-      await page.locator('a[data-rb-event-key="image-edit-panel"]').first().click({ timeout: 5000 });
-      await page.locator("#title").first().waitFor({ state: "visible", timeout: 5000 });
-    });
-    await step("rename and save", async () => {
-      await page.locator("#title").first().fill(newTitle);
-      await page.locator("button.edit-button, .edit-buttons button.btn-primary").first().click({ timeout: 5000 });
-    });
-    await step("details tab", async () => {
-      await page.locator('a[data-rb-event-key="image-details-panel"]').first().click({ timeout: 5000 });
-      await page.locator(".image-performers .performer-card").first().waitFor({ state: "visible", timeout: 5000 });
-    });
-    const bad = await crashed();
-    const kept = await page.evaluate(() => !!window.__iscCard && window.__iscCard.isConnected);
-    const allSteps = steps.length === 3 && steps.every((s) => !s.includes("failed"));
-    const saved = (await gql(`query($id: ID!) { findImage(id: $id) { title } }`, { id: img.id })).findImage.title === newTitle;
-    result(card && !bad && kept && allSteps && saved, "image page with a wrapped performer card survives editing and saving the title", `${bad ? "crashed" : kept ? "card kept" : card ? "card rebuilt" : "no card"}; ${steps.join(", ")}; ${saved ? "title saved" : "title not saved"}${errors.length ? "; " + errors[0] : ""}`);
-    await page.context().close();
+      const { page, errors, crashed } = await open(`/images/${img.id}`, { wrapCards: true, ready: ".image-tabs" });
+      await page.waitForSelector(".performer-card", { timeout: 10000 }).catch(() => {});
+      const card = await page.evaluate(() => { window.__iscCard = document.querySelector(".performer-card"); return !!window.__iscCard; });
+      // what the user did: open Edit, change the title, save, then back to Details
+      const steps = [];
+      const step = async (name, fn) => {
+        if (await crashed()) return;
+        try { await fn(); steps.push(name); } catch (e) { steps.push(name + " failed: " + String(e.message).split("\n")[0]); }
+        await page.waitForTimeout(800);
+      };
+      await step("edit tab", async () => {
+        await page.locator('a[data-rb-event-key="image-edit-panel"]').first().click({ timeout: 5000 });
+        await page.locator("#title").first().waitFor({ state: "visible", timeout: 5000 });
+      });
+      await step("rename and save", async () => {
+        await page.locator("#title").first().fill(newTitle);
+        await page.locator("button.edit-button, .edit-buttons button.btn-primary").first().click({ timeout: 5000 });
+      });
+      await step("details tab", async () => {
+        await page.locator('a[data-rb-event-key="image-details-panel"]').first().click({ timeout: 5000 });
+        await page.locator(".image-performers .performer-card").first().waitFor({ state: "visible", timeout: 5000 });
+      });
+      const bad = await crashed();
+      const kept = await page.evaluate(() => !!window.__iscCard && window.__iscCard.isConnected);
+      const allSteps = steps.length === 3 && steps.every((s) => !s.includes("failed"));
+      const saved = (await gql(`query($id: ID!) { findImage(id: $id) { title } }`, { id: img.id })).findImage.title === newTitle;
+      result(card && !bad && kept && allSteps && saved, "image page with a wrapped performer card survives editing and saving the title", `${bad ? "crashed" : kept ? "card kept" : card ? "card rebuilt" : "no card"}; ${steps.join(", ")}; ${saved ? "title saved" : "title not saved"}${errors.length ? "; " + errors[0] : ""}`);
+      await page.context().close();
     } finally {
       await gql(`mutation($id: ID!, $t: String) { imageUpdate(input: { id: $id, title: $t }) { id } }`, { id: img.id, t: img.title });
     }
@@ -262,6 +278,17 @@ try {
     const r = await page.evaluate(() => ({ cards: document.querySelectorAll(".performer-card").length, list: !!document.querySelector(".isc-list") }));
     const bad = await crashed();
     result(!bad && r.list && r.cards === 0 && !errors.length, "another plugin's after patch returning an empty array hides the card without a crash", `${r.cards} cards${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  {
+    // an array result with a "before" patch registered after Infinite Scroll's
+    const { page, errors, crashed } = await open("/galleries", { ready: ".isc-list .gallery-card" });
+    const r = await page.evaluate(() => ({
+      cards: document.querySelectorAll(".isc-list .gallery-card").length,
+      badged: [...document.querySelectorAll(".isc-list .gallery-card")].filter((c) => c.closest(".isc-cell")?.querySelector(":scope > .isc-test-badge")).length,
+    }));
+    const bad = await crashed();
+    result(!bad && r.cards > 0 && r.badged === r.cards && !errors.length, "another plugin's array result survives a later before patch passing props alone", `${r.badged}/${r.cards} cards with their badge${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   removeAll();
