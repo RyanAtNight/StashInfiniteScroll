@@ -1,10 +1,12 @@
 // Checks Infinite Scroll next to other plugins that patch the same components.
-// Installs two small stand-in plugins into a running sandbox, one at a time,
-// and removes them again at the end:
+// Installs small stand-in plugins into a running sandbox, one at a time, and
+// removes them again at the end:
 //   iscTestWrap   patches PerformerCard with "instead" and renders the rest of
 //                 the chain as a component inside its own div, like Hover Cards
 //                 does. It loads before Infinite Scroll (Stash loads plugins in
 //                 reverse id order, and lowercase sorts after uppercase).
+//   iscTestAfter  an "after" patch on SceneCard that returns an array (the
+//                 card plus a badge), also loading before Infinite Scroll.
 //   iscTestLater  registers "instead" patches after Infinite Scroll, written
 //                 the way Stash's docs show: (props, _, Original).
 //   node neighbours.mjs <port>
@@ -34,8 +36,19 @@ async function gql(query, variables) {
 const STANDINS = {
   iscTestWrap: `(function () {
   const api = window.PluginApi, h = api.React.createElement;
-  api.patch.instead("PerformerCard", function (props, _, Original) {
-    return h("div", { className: "isc-test-wrap" }, h(Original, props));
+  for (const n of ["PerformerCard", "SceneCard"]) {
+    api.patch.instead(n, function (props, _, Original) {
+      return h("div", { className: "isc-test-wrap" }, h(Original, props));
+    });
+  }
+})();`,
+  iscTestAfter: `(function () {
+  const api = window.PluginApi, React = api.React, h = React.createElement;
+  api.patch.after("SceneCard", function (props, _, result) {
+    return [
+      React.cloneElement(result, { key: "card" }),
+      h("span", { key: "badge", className: "isc-test-badge", style: { position: "absolute" } }),
+    ];
   });
 })();`,
   iscTestLater: `(function () {
@@ -125,18 +138,84 @@ try {
     await page.context().close();
   }
   {
+    // far-off cards become placeholders of the right size and come back,
+    // although each card now sits inside the other plugin's element
+    const { page, errors, crashed } = await open("/scenes");
+    const first = () => page.evaluate(() => {
+      const el = document.querySelector(".isc-list [data-isc-item]");
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { ph: el.classList.contains("isc-ph"), h: Math.round(r.height), w: Math.round(r.width), wrapped: !!el.closest(".isc-test-wrap") || el.classList.contains("isc-test-wrap") };
+    });
+    const before = await first();
+    await page.mouse.move(640, 400);
+    for (let i = 0; i < 40; i++) { await page.mouse.wheel(0, 1500); await page.waitForTimeout(150); }
+    await page.waitForTimeout(1500);
+    const far = await first();
+    const phs = await page.evaluate(() => document.querySelectorAll(".isc-ph").length);
+    for (let i = 0; i < 40; i++) { await page.mouse.wheel(0, -1500); await page.waitForTimeout(150); }
+    await page.waitForTimeout(2000);
+    const back = await first();
+    const bad = await crashed();
+    const ok = !bad && before && before.wrapped && !before.ph && far && far.ph && phs > 0 &&
+      Math.abs(far.h - before.h) <= 2 && Math.abs(far.w - before.w) <= 2 && back && !back.ph && back.wrapped;
+    result(ok, "wrapped cards turn into same-size placeholders and back", `${phs} placeholders, card ${before && before.w}x${before && before.h}, placeholder ${far && far.w}x${far && far.h}${far && !far.ph ? " (not a placeholder)" : ""}${back && back.ph ? ", not restored" : ""}${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  {
     // the image page shows a PerformerCard for each performer, outside any list
     const img = (await gql(`{ findImages(image_filter: { performer_count: { value: 0, modifier: GREATER_THAN } }, filter: { per_page: 1 }) { images { id } } }`)).findImages.images[0];
     const { page, errors, crashed } = await open(`/images/${img.id}`, { wrapCards: true });
     await page.waitForSelector(".performer-card", { timeout: 10000 }).catch(() => {});
     const card = await page.evaluate(() => { window.__iscCard = document.querySelector(".performer-card"); return !!window.__iscCard; });
-    await page.locator('a[data-rb-event-key="image-edit-panel"]').first().click({ timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(800);
-    await page.locator('a[data-rb-event-key="image-details-panel"]').first().click({ timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(800);
+    // what the user did: open Edit, change the title, save, then back to Details
+    const steps = [];
+    const step = async (name, fn) => {
+      if (await crashed()) return;
+      try { await fn(); steps.push(name); } catch (e) { steps.push(name + " failed: " + String(e.message).split("\n")[0]); }
+      await page.waitForTimeout(800);
+    };
+    await step("edit tab", async () => {
+      await page.locator('a[data-rb-event-key="image-edit-panel"]').first().click({ timeout: 5000 });
+      await page.locator("#title").first().waitFor({ state: "visible", timeout: 5000 });
+    });
+    await step("rename and save", async () => {
+      await page.locator("#title").first().fill("Renamed " + Date.now());
+      await page.locator("button.edit-button, .edit-buttons button.btn-primary").first().click({ timeout: 5000 });
+    });
+    await step("details tab", async () => {
+      await page.locator('a[data-rb-event-key="image-details-panel"]').first().click({ timeout: 5000 });
+      await page.locator(".image-performers .performer-card").first().waitFor({ state: "visible", timeout: 5000 });
+    });
     const bad = await crashed();
     const kept = await page.evaluate(() => !!window.__iscCard && window.__iscCard.isConnected);
-    result(card && !bad && kept, "image page with a wrapped performer card survives switching tabs", `${bad ? "crashed" : kept ? "card kept" : card ? "card rebuilt" : "no card"}${errors.length ? ", " + errors[0] : ""}`);
+    const allSteps = steps.length === 3 && steps.every((s) => !s.includes("failed"));
+    result(card && !bad && kept && allSteps, "image page with a wrapped performer card survives editing and saving the title", `${bad ? "crashed" : kept ? "card kept" : card ? "card rebuilt" : "no card"}; ${steps.join(", ")}${errors.length ? "; " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  removeAll();
+
+  // --- a plugin whose "after" patch returns an array
+  install("iscTestAfter");
+  await gql("mutation { reloadPlugins }");
+  {
+    const { page, errors, crashed } = await open("/scenes");
+    const count = () => page.evaluate(() => ({
+      cards: document.querySelectorAll(".isc-list .scene-card").length,
+      badges: document.querySelectorAll(".isc-list .isc-test-badge").length,
+      phs: document.querySelectorAll(".isc-list .isc-ph").length,
+    }));
+    const first = await count();
+    await page.mouse.move(640, 400);
+    for (let i = 0; i < 40; i++) { await page.mouse.wheel(0, 1500); await page.waitForTimeout(150); }
+    await page.waitForTimeout(1500);
+    const far = await count();
+    for (let i = 0; i < 40; i++) { await page.mouse.wheel(0, -1500); await page.waitForTimeout(150); }
+    await page.waitForTimeout(2000);
+    const back = await count();
+    const bad = await crashed();
+    const ok = !bad && first.cards > 0 && [first, far, back].every((c) => c.badges === c.cards) && far.phs > 0;
+    result(ok, "another plugin's after patch returning an array keeps every part, through placeholders", `cards/badges ${first.cards}/${first.badges} -> ${far.cards}/${far.badges} (${far.phs} placeholders) -> ${back.cards}/${back.badges}${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   removeAll();
@@ -145,12 +224,21 @@ try {
   install("iscTestLater");
   await gql("mutation { reloadPlugins }");
   {
+    // (Infinite Scroll patches cards with "after", so only the list and
+    // pagination patches really test this; the card one is a control)
     const { page, errors, crashed } = await open("/performers");
-    const bad = await crashed();
     const seen = await page.evaluate(() => window.__iscTestLater || {});
     const cards = await page.evaluate(() => document.querySelectorAll(".performer-card").length);
-    const allFns = ["PerformerCard", "PerformerList", "Pagination", "PaginationIndex"].every((n) => seen[n] === "function");
-    result(!bad && cards > 0 && allFns, "a plugin patching after Infinite Scroll gets its next function", `${bad ? "crashed, " : ""}${cards} cards, ${JSON.stringify(seen)}${errors.length ? ", " + errors[0] : ""}`);
+    // and infinite loading still works with the list rendered by that plugin
+    await page.mouse.move(640, 400);
+    for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 600); await page.waitForTimeout(600); }
+    await page.waitForTimeout(1500);
+    const more = await page.evaluate(() => document.querySelectorAll(".performer-card").length);
+    const bad = await crashed();
+    // PaginationIndex only reaches the next patch while the list is loading,
+    // so it's reported but not required
+    const allFns = ["PerformerCard", "PerformerList", "Pagination"].every((n) => seen[n] === "function") && seen.PaginationIndex !== "undefined";
+    result(!bad && cards > 0 && more > cards && allFns, "a plugin patching after Infinite Scroll gets its next function, and loading continues", `${bad ? "crashed, " : ""}${cards} -> ${more} cards, ${JSON.stringify(seen)}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
 } finally {

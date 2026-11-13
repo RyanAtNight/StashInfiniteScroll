@@ -810,9 +810,12 @@
   const sizeCache = new Map();
   const batchedUpdates = (api.ReactDOM && api.ReactDOM.unstable_batchedUpdates) || ((fn) => fn());
 
-  function rememberSize(id, w, hgt) {
+  // `pw` is the card's width prop when it was measured. The measured element
+  // can be wider than that: another plugin's wrapper around the card includes
+  // the card's margins.
+  function rememberSize(id, w, hgt, pw) {
     sizeCache.delete(id);
-    sizeCache.set(id, { w, h: hgt });
+    sizeCache.set(id, { w, h: hgt, pw });
     if (sizeCache.size > MAX_SIZE_CACHE) sizeCache.delete(sizeCache.keys().next().value);
   }
 
@@ -955,10 +958,11 @@
   })();
 
   // renders a component function inline, inside a stable component type.
-  // `extra` is the rest of what React passed the component, so a plugin that
-  // patches it after us still finds its own `next` function in the usual place
+  // `extra` is the rest of what React passed the component. The second slot is
+  // always filled, so a plugin that patches it after us, written as
+  // (props, _, next), still finds its `next` function in the third place.
   function Passthrough({ Original, props, extra }) {
-    return extra && extra.length ? Original(props, ...extra) : Original(props);
+    return Original(props, ...(extra && extra.length ? extra : [undefined]));
   }
 
   // the card's entity, e.g. props.scene for SceneCard: "Scene:123"
@@ -975,6 +979,8 @@
     const props = latest ? latest.props : givenProps;
     const rendered = latest ? latest.rendered : givenRendered;
     const ref = React.useRef(null);
+    const widthRef = React.useRef(props.width);
+    widthRef.current = props.width;
     const [near, setNear] = React.useState(() => !(ctl.enabled && id && sizeCache.has(id)));
     const show = near || !ctl.enabled || !id || !sizeCache.has(id);
     const enabled = ctl.enabled && !!id;
@@ -999,7 +1005,7 @@
         ctl.cancel(el);
         // a hidden card (e.g. inactive tab) has no size; leave it alone
         if (!rect.width || !rect.height) return;
-        if (show) rememberSize(id, rect.width, rect.height);
+        if (show) rememberSize(id, rect.width, rect.height, widthRef.current);
         setNear(false);
       });
       return () => ctl.unobserve(el);
@@ -1015,7 +1021,8 @@
     }
     ctl.far.add(id);
     const s = sizeCache.get(id);
-    const width = props.width || s.w;
+    // follows the card's width prop (zoom), keeping any extra a wrapper adds
+    const width = props.width ? props.width + (s.pw ? s.w - s.pw : 0) : s.w;
     return h("div", {
       ref,
       className: "isc-ph",
@@ -2229,7 +2236,9 @@
     // returned untouched.
     for (const name of CARD_COMPONENTS) {
       api.patch.after(name, function (props, ...rest) {
-        const rendered = lastArg(rest);
+        // Stash appends the result with concat, which spreads an array that an
+        // earlier patch returned; React itself always passes two arguments
+        const rendered = rest.length > 2 ? rest.slice(1) : lastArg(rest);
         const ctl = React.useContext(WindowCtx);
         if (!ctl) return rendered;
         const id = cardId(props);
