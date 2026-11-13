@@ -8,9 +8,10 @@
 //   iscTestAfter  on SceneCard a "before" patch passing props alone and an
 //                 "after" patch returning an array (the card plus a badge);
 //                 on PerformerCard an "after" patch returning [] (no card);
-//                 on GalleryCard an array result. PerformerCard and
-//                 GalleryCard also get a "before" patch passing props alone,
-//                 registered after Infinite Scroll.
+//                 on GalleryCard and TagCard an array result, on StudioCard
+//                 one holding a portal. Registered after Infinite Scroll:
+//                 "before" patches passing props alone (PerformerCard,
+//                 GalleryCard, StudioCard) and adding an argument (TagCard).
 //                 Also loads before Infinite Scroll.
 //   iscTestLater  registers "instead" patches after Infinite Scroll, written
 //                 the way Stash's docs show: (props, _, Original).
@@ -67,18 +68,31 @@ const STANDINS = {
   api.patch.after("PerformerCard", function () {
     return [];
   });
-  api.patch.after("GalleryCard", function (props, ...rest) {
-    const result = rest[rest.length - 1];
-    return [
-      React.cloneElement(result, { key: "card" }),
-      h("span", { key: "badge", className: "isc-test-badge", style: { position: "absolute" } }),
-    ];
-  });
-  // "before" patches passing props alone, registered after Infinite Scroll's
+  for (const n of ["GalleryCard", "TagCard"]) {
+    api.patch.after(n, function (props, ...rest) {
+      const result = rest[rest.length - 1];
+      return [
+        React.cloneElement(result, { key: "card" }),
+        h("span", { key: "badge", className: "isc-test-badge", style: { position: "absolute" } }),
+      ];
+    });
+  }
+  // "before" patches registered after Infinite Scroll's: passing props alone,
+  // and adding an argument
   const late = () => {
     if (!window.InfiniteScrollDebug) return setTimeout(late, 20);
     for (const n of ["PerformerCard", "GalleryCard"]) api.patch.before(n, (props) => [props]);
+    api.patch.before("TagCard", (...args) => args.concat({ iscTest: 1 }));
+    api.patch.before("StudioCard", (props) => [props]);
   };
+  // a portal (not a valid element to React.isValidElement) next to each studio card
+  api.patch.after("StudioCard", function (props, ...rest) {
+    const result = rest[rest.length - 1];
+    return [
+      api.ReactDOM.createPortal(h("span", { className: "isc-test-portal" }), document.body, "portal"),
+      React.cloneElement(result, { key: "card" }),
+    ];
+  });
   late();
 })();`,
   iscTestLater: `(function () {
@@ -274,10 +288,12 @@ try {
   }
   {
     // an empty array from another plugin's after patch: no card, no crash
-    const { page, errors, crashed } = await open("/performers", { ready: ".isc-list .isc-ph, .isc-list [data-isc-item], .isc-list ~ *, .paginationIndex" });
-    const r = await page.evaluate(() => ({ cards: document.querySelectorAll(".performer-card").length, list: !!document.querySelector(".isc-list") }));
+    const { page, errors, crashed } = await open("/performers", { ready: ".isc-list .isc-cell" });
+    // each hidden card still leaves its (empty) cell, which shows the list loaded
+    await page.waitForFunction(() => document.querySelectorAll(".isc-list .isc-cell").length > 0, null, { timeout: 15000 }).catch(() => {});
+    const r = await page.evaluate(() => ({ cards: document.querySelectorAll(".performer-card").length, cells: document.querySelectorAll(".isc-list .isc-cell").length }));
     const bad = await crashed();
-    result(!bad && r.list && r.cards === 0 && !errors.length, "another plugin's after patch returning an empty array hides the card without a crash", `${r.cards} cards${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    result(!bad && r.cells > 0 && r.cards === 0 && !errors.length, "another plugin's after patch returning an empty array hides the card without a crash", `${r.cards} cards in ${r.cells} cells${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   {
@@ -289,6 +305,28 @@ try {
     }));
     const bad = await crashed();
     result(!bad && r.cards > 0 && r.badged === r.cards && !errors.length, "another plugin's array result survives a later before patch passing props alone", `${r.badged}/${r.cards} cards with their badge${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  {
+    // a portal in another plugin's result, with a later "before" patch
+    const { page, errors, crashed } = await open("/studios", { ready: ".isc-list .studio-card" });
+    const r = await page.evaluate(() => ({
+      cards: document.querySelectorAll(".isc-list .studio-card").length,
+      portals: document.querySelectorAll("body > .isc-test-portal").length,
+    }));
+    const bad = await crashed();
+    result(!bad && r.cards > 0 && r.portals === r.cards && !errors.length, "another plugin's portal survives a later before patch passing props alone", `${r.portals} portals for ${r.cards} cards${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  {
+    // and a later "before" patch that adds an argument
+    const { page, errors, crashed } = await open("/tags", { ready: ".isc-list .tag-card" });
+    const r = await page.evaluate(() => ({
+      cards: document.querySelectorAll(".isc-list .tag-card").length,
+      badged: [...document.querySelectorAll(".isc-list .tag-card")].filter((c) => c.closest(".isc-cell")?.querySelector(":scope > .isc-test-badge")).length,
+    }));
+    const bad = await crashed();
+    result(!bad && r.cards > 0 && r.badged === r.cards && !errors.length, "another plugin's array result survives a later before patch adding an argument", `${r.badged}/${r.cards} cards with their badge${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   removeAll();
@@ -306,12 +344,15 @@ try {
     await page.mouse.move(640, 400);
     for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 600); await page.waitForTimeout(600); }
     await page.waitForTimeout(1500);
-    const more = await page.evaluate(() => document.querySelectorAll(".performer-card").length);
+    // loaded items, counting cards far enough off-screen to be placeholders
+    const more = await page.evaluate(() => { const r = [...(window.InfiniteScrollDebug?.activeLists || [])][0]; return r ? r.itemCount : 0; });
     const bad = await crashed();
     // PaginationIndex only reaches the next patch while the list is loading,
     // so it's reported but not required
     const allFns = ["PerformerCard", "PerformerList", "Pagination"].every((n) => seen[n] === "function") && seen.PaginationIndex !== "undefined";
-    result(!bad && cards > 0 && more > cards && allFns, "a plugin patching after Infinite Scroll gets its next function, and loading continues", `${bad ? "crashed, " : ""}${cards} -> ${more} cards, ${JSON.stringify(seen)}${errors.length ? ", " + errors[0] : ""}`);
+    // every performer, whether the second batch came by itself or by scrolling
+    const total = (await gql("{ findPerformers { count } }")).findPerformers.count;
+    result(!bad && cards > 0 && more === total && allFns, "a plugin patching after Infinite Scroll gets its next function, and loading continues", `${bad ? "crashed, " : ""}${cards} -> ${more} of ${total} cards, ${JSON.stringify(seen)}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
 } finally {

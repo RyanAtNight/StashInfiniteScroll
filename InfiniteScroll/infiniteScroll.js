@@ -2233,7 +2233,10 @@
     // React rebuild the card every time, on every page that shows one. As an
     // "after" patch the card and other plugins' patches render as they would
     // without this plugin, and outside an infinite list the result is
-    // returned untouched.
+    // returned untouched. One consequence: inside a list, hooks that another
+    // plugin calls in its card patch stay mounted while the card's DOM is
+    // swapped for a placeholder, so an effect holding on to that DOM needs to
+    // re-check its ref.
     //
     // An "after" patch gets the component's arguments followed by the result,
     // joined with concat, so an array result arrives spread out (or not at
@@ -2241,8 +2244,8 @@
     // arguments there are. A "before" patch of ours notes the arguments, so
     // the result can be split off exactly. It only sees the final arguments if
     // it runs last, so when a "before" patch registered after it changes them,
-    // another one is added (now last) and, for that render, React's second
-    // argument is told apart from the result by what it looks like.
+    // another one is added (now last) and, for that render, the result is
+    // told apart from the arguments by being something React can draw.
     const cardArgs = {};
     const recorders = {};
     const addRecorder = (name) => {
@@ -2252,19 +2255,24 @@
         return args;
       });
     };
-    // React's second argument: legacy context, a plain object, or nothing
-    const looksLikeContext = (v) =>
-      v === undefined || (v !== null && typeof v === "object" && !Array.isArray(v) && !React.isValidElement(v));
+    // what React can draw. Arguments are props, React's second argument
+    // (legacy context, a plain object, for these plain function components)
+    // and whatever other plugins add; none of those that matter can be drawn
+    // (elements and portals both carry a symbol $$typeof)
+    const drawable = (v) =>
+      v == null || typeof v === "string" || typeof v === "number" || typeof v === "boolean" ||
+      Array.isArray(v) || (typeof v === "object" && typeof v.$$typeof === "symbol");
     const cardResult = (name, all) => {
       const args = cardArgs[name];
       cardArgs[name] = undefined;
-      let parts;
-      if (args && args.length <= all.length && args.every((a, i) => all[i] === a)) {
-        parts = all.slice(args.length);
-      } else {
+      let parts = args && args.length <= all.length && args.every((a, i) => all[i] === a) ? all.slice(args.length) : null;
+      // a later patch that added an argument still matches at the start
+      if (!parts || !parts.every(drawable)) {
         if (recorders[name] < 3) addRecorder(name);
-        const rest = all.slice(1);
-        parts = rest.length && looksLikeContext(rest[0]) ? rest.slice(1) : rest;
+        // the result is the drawable run at the end
+        let i = all.length;
+        while (i > 1 && drawable(all[i - 1])) i--;
+        parts = all.slice(i);
       }
       return parts.length === 1 ? parts[0] : parts;
     };

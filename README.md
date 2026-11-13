@@ -18,7 +18,7 @@ A [Stash](https://github.com/stashapp/stash) UI plugin that replaces page button
 | v0.31.1 | Tested |
 | v0.30 and older | Not tested |
 
-Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. The plugin has no dependencies and doesn't need any other plugin.
+Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. Version 1.1.3 was re-checked on 2026-11-13 on v0.31.1 and v0.32.0, also next to stand-in plugins that patch the same cards and lists the way Hover Cards and Stash's plugin examples do. The plugin has no dependencies and doesn't need any other plugin.
 
 If a Stash update removes something the plugin relies on, that part switches itself off and Stash's normal pages are used, so the worst case is ordinary pagination rather than a broken page.
 
@@ -105,6 +105,7 @@ Settings take effect when you next open a page.
 - **After a library scan**, the restored list can be off by a row.
 - **Browser find (Ctrl+F)** only finds text in rendered cards. Off-screen Grid cards are placeholders.
 - **Where the plugin is switched off** for a view, that view keeps the 14-per-page setting until you change it.
+- **For other plugins' authors:** inside an infinite list, a card far off-screen is swapped for an empty box while your card patch's hooks stay mounted, so an effect that holds on to the card's DOM should re-check its ref.
 
 ## Troubleshooting
 
