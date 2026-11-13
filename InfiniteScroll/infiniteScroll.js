@@ -460,7 +460,7 @@
     return function (existing, opts) {
       // register the dependency so that bump() re-runs this read
       versionVar();
-      if (rawReads > 0 || existing === undefined || store.size === 0) return existing;
+      if (rawReads > 0 || existing == null || store.size === 0) return existing;
       const args = opts.args;
       if (!args || !args.filter) return existing;
 
@@ -852,7 +852,7 @@
       margin: undefined,
       // ids currently shown as placeholders
       far: new Set(),
-      // the latest props for each card, which a skipped (memoised)
+      // the latest props and rendered card for each card, which a skipped (memoised)
       // placeholder needs when it turns back into a real card
       latest: new Map(),
       observe(el, fn) {
@@ -954,9 +954,11 @@
     };
   })();
 
-  // renders a component function inline, inside a stable component type
-  function Passthrough({ Original, props }) {
-    return Original(props);
+  // renders a component function inline, inside a stable component type.
+  // `extra` is the rest of what React passed the component, so a plugin that
+  // patches it after us still finds its own `next` function in the usual place
+  function Passthrough({ Original, props, extra }) {
+    return extra && extra.length ? Original(props, ...extra) : Original(props);
   }
 
   // the card's entity, e.g. props.scene for SceneCard: "Scene:123"
@@ -968,10 +970,10 @@
     return undefined;
   }
 
-  function WindowedCard({ ctl, id, props: givenProps, Original: givenOriginal }) {
+  function WindowedCard({ ctl, id, props: givenProps, rendered: givenRendered }) {
     const latest = id && ctl.latest.get(id);
     const props = latest ? latest.props : givenProps;
-    const Original = latest ? latest.Original : givenOriginal;
+    const rendered = latest ? latest.rendered : givenRendered;
     const ref = React.useRef(null);
     const [near, setNear] = React.useState(() => !(ctl.enabled && id && sizeCache.has(id)));
     const show = near || !ctl.enabled || !id || !sizeCache.has(id);
@@ -1008,7 +1010,7 @@
       return h(
         "div",
         { ref, className: "isc-cell", style: { display: "contents" } },
-        h(Passthrough, { Original, props })
+        rendered
       );
     }
     ctl.far.add(id);
@@ -1519,7 +1521,7 @@
     );
   }
 
-  function InfiniteList({ name, cfg, props, Original }) {
+  function InfiniteList({ name, cfg, props, Original, extra }) {
     const history = ReactRouterDOM.useHistory();
     const location = ReactRouterDOM.useLocation();
     trackNavigation(history);
@@ -2049,7 +2051,7 @@
 
     // --- render ---------------------------------------------------------------
 
-    const inner = h(WindowCtx.Provider, { value: ctl }, h(Passthrough, { Original, props: passProps }));
+    const inner = h(WindowCtx.Provider, { value: ctl }, h(Passthrough, { Original, props: passProps, extra }));
     if (!enabled) return h("div", { className: "isc-list", ref: containerRef }, inner);
 
     return h(
@@ -2087,7 +2089,7 @@
   // ---------------------------------------------------------------------------
   // pagination patches
 
-  function PaginationProxy({ props, Original }) {
+  function PaginationProxy({ props, Original, extra }) {
     useRegistry();
     const reg = matchActiveList(props.itemsPerPage, props.totalItems, props.currentPage);
     if (reg) {
@@ -2102,16 +2104,16 @@
           else props.onChangePage(p);
         },
       });
-      return h(Passthrough, { Original, props: jumper });
+      return h(Passthrough, { Original, props: jumper, extra });
     }
-    return h(Passthrough, { Original, props });
+    return h(Passthrough, { Original, props, extra });
   }
 
-  function PaginationIndexProxy({ props, Original }) {
+  function PaginationIndexProxy({ props, Original, extra }) {
     useRegistry();
     const intl = Intl.useIntl();
     const reg = props.loading ? undefined : matchActiveList(props.itemsPerPage, props.totalItems, props.currentPage);
-    if (!reg) return h(Passthrough, { Original, props });
+    if (!reg) return h(Passthrough, { Original, props, extra });
     // with no pages, the count is just the total
     return h(
       "span",
@@ -2213,29 +2215,35 @@
     for (const name of Object.keys(LISTS)) {
       const cfg = LISTS[name];
       api.patch.instead(name, function (props, ...rest) {
-        return h(InfiniteList, { name, cfg, props, Original: lastArg(rest) });
+        return h(InfiniteList, { name, cfg, props, Original: lastArg(rest), extra: rest.slice(0, -1) });
       });
     }
 
-    // Windowing is applied per card type rather than on the shared GridCard,
-    // so that an off-screen card skips its own (fairly heavy) render as well.
+    // Windowing is applied per card type rather than on the shared GridCard.
+    // It's an "after" patch, not "instead": with two "instead" patches on a
+    // card, Stash hands the first one a new function for the rest each render,
+    // and a plugin that renders that as a component (Hover Cards does) makes
+    // React rebuild the card every time, on every page that shows one. As an
+    // "after" patch the card and other plugins' patches render as they would
+    // without this plugin, and outside an infinite list the result is
+    // returned untouched.
     for (const name of CARD_COMPONENTS) {
-      api.patch.instead(name, function (props, ...rest) {
-        const Original = lastArg(rest);
+      api.patch.after(name, function (props, ...rest) {
+        const rendered = lastArg(rest);
         const ctl = React.useContext(WindowCtx);
-        if (!ctl) return h(Passthrough, { Original, props });
+        if (!ctl) return rendered;
         const id = cardId(props);
-        if (id) ctl.latest.set(id, { props, Original });
-        return h(MemoWindowedCard, { ctl, id, props, Original });
+        if (id) ctl.latest.set(id, { props, rendered });
+        return h(MemoWindowedCard, { ctl, id, props, rendered });
       });
     }
 
     api.patch.instead("Pagination", function (props, ...rest) {
-      return h(PaginationProxy, { props, Original: lastArg(rest) });
+      return h(PaginationProxy, { props, Original: lastArg(rest), extra: rest.slice(0, -1) });
     });
 
     api.patch.instead("PaginationIndex", function (props, ...rest) {
-      return h(PaginationIndexProxy, { props, Original: lastArg(rest) });
+      return h(PaginationIndexProxy, { props, Original: lastArg(rest), extra: rest.slice(0, -1) });
     });
 
     installTaggerConfirm();
