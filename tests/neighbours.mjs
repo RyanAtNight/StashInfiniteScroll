@@ -38,6 +38,8 @@ async function gql(query, variables) {
 const STANDINS = {
   iscTestWrap: `(function () {
   const api = window.PluginApi, h = api.React.createElement;
+  // these checks only mean something if this registers before Infinite Scroll
+  (window.__iscTestFirst = window.__iscTestFirst || {})["iscTestWrap"] = !window.InfiniteScrollDebug;
   for (const n of ["PerformerCard", "SceneCard"]) {
     api.patch.instead(n, function (props, _, Original) {
       return h("div", { className: "isc-test-wrap" }, h(Original, props));
@@ -46,6 +48,8 @@ const STANDINS = {
 })();`,
   iscTestAfter: `(function () {
   const api = window.PluginApi, React = api.React, h = React.createElement;
+  // these checks only mean something if this registers before Infinite Scroll
+  (window.__iscTestFirst = window.__iscTestFirst || {})["iscTestAfter"] = !window.InfiniteScrollDebug;
   // a "before" patch that drops React's second argument
   api.patch.before("SceneCard", function (props) {
     return [props];
@@ -123,7 +127,12 @@ async function open(path, { wrapCards, ready = ".isc-list [data-isc-item]" } = {
     if (b) b.click();
   });
   await page.waitForTimeout(800);
-  return { page, errors, crashed: () => page.evaluate(() => /Something went wrong/i.test(document.body.innerText)) };
+  return {
+    page,
+    errors,
+    crashed: () => page.evaluate(() => /Something went wrong/i.test(document.body.innerText)),
+    firstFor: (id) => page.evaluate((id) => !!(window.__iscTestFirst && window.__iscTestFirst[id]), id),
+  };
 }
 
 try {
@@ -133,7 +142,8 @@ try {
   install("iscTestWrap");
   await gql("mutation { reloadPlugins }");
   {
-    const { page, errors, crashed } = await open("/performers");
+    const { page, errors, crashed, firstFor } = await open("/performers");
+    const order = await firstFor("iscTestWrap");
     const n = await page.evaluate(() => {
       window.__iscCards = [...document.querySelectorAll(".performer-card")];
       return window.__iscCards.length;
@@ -146,7 +156,7 @@ try {
       kept: window.__iscCards.filter((c) => c.isConnected).length,
     }));
     const bad = await crashed();
-    result(!bad && n > 0 && r.now > n && r.kept === n, "cards already shown survive a new batch next to a wrapping plugin", `${r.kept}/${n} kept, ${r.now} now${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    result(order && !bad && n > 0 && r.now > n && r.kept === n, "cards already shown survive a new batch next to a wrapping plugin", `${order ? "" : "stand-in loaded after Infinite Scroll, "}${r.kept}/${n} kept, ${r.now} now${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   {
@@ -176,7 +186,11 @@ try {
   }
   {
     // the image page shows a PerformerCard for each performer, outside any list
-    const img = (await gql(`{ findImages(image_filter: { performer_count: { value: 0, modifier: GREATER_THAN } }, filter: { per_page: 1 }) { images { id } } }`)).findImages.images[0];
+    const img = (await gql(`{ findImages(image_filter: { performer_count: { value: 0, modifier: GREATER_THAN } }, filter: { per_page: 1 }) { images { id title } } }`)).findImages.images[0];
+    // the reported crash needed an image that already has a title
+    const newTitle = "Renamed " + Date.now();
+    await gql(`mutation($id: ID!) { imageUpdate(input: { id: $id, title: "Has a title" }) { id } }`, { id: img.id });
+    try {
     const { page, errors, crashed } = await open(`/images/${img.id}`, { wrapCards: true, ready: ".image-tabs" });
     await page.waitForSelector(".performer-card", { timeout: 10000 }).catch(() => {});
     const card = await page.evaluate(() => { window.__iscCard = document.querySelector(".performer-card"); return !!window.__iscCard; });
@@ -192,7 +206,7 @@ try {
       await page.locator("#title").first().waitFor({ state: "visible", timeout: 5000 });
     });
     await step("rename and save", async () => {
-      await page.locator("#title").first().fill("Renamed " + Date.now());
+      await page.locator("#title").first().fill(newTitle);
       await page.locator("button.edit-button, .edit-buttons button.btn-primary").first().click({ timeout: 5000 });
     });
     await step("details tab", async () => {
@@ -202,8 +216,12 @@ try {
     const bad = await crashed();
     const kept = await page.evaluate(() => !!window.__iscCard && window.__iscCard.isConnected);
     const allSteps = steps.length === 3 && steps.every((s) => !s.includes("failed"));
-    result(card && !bad && kept && allSteps, "image page with a wrapped performer card survives editing and saving the title", `${bad ? "crashed" : kept ? "card kept" : card ? "card rebuilt" : "no card"}; ${steps.join(", ")}${errors.length ? "; " + errors[0] : ""}`);
+    const saved = (await gql(`query($id: ID!) { findImage(id: $id) { title } }`, { id: img.id })).findImage.title === newTitle;
+    result(card && !bad && kept && allSteps && saved, "image page with a wrapped performer card survives editing and saving the title", `${bad ? "crashed" : kept ? "card kept" : card ? "card rebuilt" : "no card"}; ${steps.join(", ")}; ${saved ? "title saved" : "title not saved"}${errors.length ? "; " + errors[0] : ""}`);
     await page.context().close();
+    } finally {
+      await gql(`mutation($id: ID!, $t: String) { imageUpdate(input: { id: $id, title: $t }) { id } }`, { id: img.id, t: img.title });
+    }
   }
   removeAll();
 
@@ -211,7 +229,8 @@ try {
   install("iscTestAfter");
   await gql("mutation { reloadPlugins }");
   {
-    const { page, errors, crashed } = await open("/scenes");
+    const { page, errors, crashed, firstFor } = await open("/scenes");
+    const order = await firstFor("iscTestAfter");
     // the first item of the list, followed card -> placeholder -> card
     const state = () => page.evaluate(() => {
       const item = document.querySelector(".isc-list [data-isc-item]");
@@ -232,9 +251,9 @@ try {
     await page.waitForTimeout(2000);
     const back = await state();
     const bad = await crashed();
-    const ok = !bad && first.first === "card+badge" && far.first === "placeholder" && back.first === "card+badge" &&
+    const ok = order && !bad && first.first === "card+badge" && far.first === "placeholder" && back.first === "card+badge" &&
       [first, far, back].every((c) => c.badges === c.cards);
-    result(ok, "another plugin's array result (after a before patch with one argument) survives placeholders", `first item ${first.first} -> ${far.first} -> ${back.first}; cards/badges ${first.cards}/${first.badges}, ${far.cards}/${far.badges}, ${back.cards}/${back.badges}${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    result(ok, "another plugin's array result (after a before patch with one argument) survives placeholders", `${order ? "" : "stand-in loaded after Infinite Scroll; "}first item ${first.first} -> ${far.first} -> ${back.first}; cards/badges ${first.cards}/${first.badges}, ${far.cards}/${far.badges}, ${back.cards}/${back.badges}${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   {

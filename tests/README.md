@@ -26,7 +26,13 @@ Nothing opens a window while it runs: the sandbox Stash and everything it starts
 
 `node stress.mjs 9912` flings the scene, performer, Wall and image lists up and down and fails on any `removeChild` / `insertBefore` error or Stash's "Something went wrong" screen. `INJECT=translate` makes it rewrite the list's text the way Chrome's page translation does (the cause of the v1.1.0 crash). `INJECT=wrap` wraps each card in a foreign element, as some other plugins do (the cause of the v1.1.1 crash), and `INJECT=remove` deletes an element inside each card. `WHERE=1` logs which element React tripped over.
 
-`node neighbours.mjs 9912` checks the plugin next to others that patch the same components, using two small stand-in plugins it installs and removes again: one renders the card's other patches inside its own element (as Hover Cards does), the other patches after Infinite Scroll the way Stash's docs show (the causes of the v1.1.2 image-page crash and of a crash with later-loading plugins).
+`node neighbours.mjs 9912` checks the plugin next to others that patch the same components, using three small stand-in plugins it installs and removes again:
+
+- one renders the card's other patches inside its own element, as Hover Cards does. Cards already shown must survive a new batch, turn into placeholders of the same size and back, and an image's own page must survive renaming and saving with a wrapped performer card (the v1.1.2 image-page crash);
+- one changes a card's arguments and returns an array, or nothing, from an "after" patch, which must come through whole, through placeholders;
+- one patches after Infinite Scroll the way Stash's docs show, and must get its next function while loading keeps working.
+
+The first two must load before Infinite Scroll, and the checks fail if they don't.
 
 The test library is 90 short videos, 120 images (3 of its folders become galleries), 40 performers, 20 studios, 40 tags, 18 groups and 40 markers. The first studio, performer, tag and group hold most of it, so their pages need several batches.
 
