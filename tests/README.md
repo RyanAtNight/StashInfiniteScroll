@@ -24,7 +24,7 @@ Nothing opens a window while it runs: the sandbox Stash and everything it starts
 
 `ONLY=<regex>` runs just the matching checks (for example `ONLY="back from"`), and `TRACE=1` prints the plugin's own trace. Reports are written to `.sandbox/report-<label>.json`, with any console errors and which check they happened in.
 
-`node stress.mjs 9912` flings the scene, performer, Wall and image lists up and down and fails on any `removeChild` / `insertBefore` error or Stash's "Something went wrong" screen. `INJECT=translate` makes it rewrite the list's text the way Chrome's page translation does (the cause of the v1.1.0 crash), and `WHERE=1` logs which element React tripped over.
+`node stress.mjs 9912` flings the scene, performer, Wall and image lists up and down and fails on any `removeChild` / `insertBefore` error or Stash's "Something went wrong" screen. `INJECT=translate` makes it rewrite the list's text the way Chrome's page translation does (the cause of the v1.1.0 crash). `INJECT=wrap` wraps each card in a foreign element, as some other plugins do (the cause of the v1.1.1 crash), and `INJECT=remove` deletes an element inside each card. `WHERE=1` logs which element React tripped over.
 
 The test library is 90 short videos, 120 images (3 of its folders become galleries), 40 performers, 20 studios, 40 tags, 18 groups and 40 markers. The first studio, performer, tag and group hold most of it, so their pages need several batches.
 

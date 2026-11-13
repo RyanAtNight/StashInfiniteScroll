@@ -33,6 +33,30 @@ if (process.env.INJECT === "translate") {
         .observe(document.body, { childList: true, subtree: true }));
   });
 }
+if (process.env.INJECT === "wrap" || process.env.INJECT === "remove") {
+  // what some other plugins do to cards: wrap a card's root in their own
+  // element, or remove an element React rendered inside the card
+  const mode = process.env.INJECT;
+  await page.addInitScript((mode) => {
+    const touch = () => {
+      document.querySelectorAll(".isc-list .scene-card, .isc-list .performer-card").forEach((card) => {
+        if (card.dataset.iscTest) return;
+        card.dataset.iscTest = "1";
+        if (mode === "wrap") {
+          const w = document.createElement("div");
+          w.className = "foreign-wrapper";
+          card.parentNode.insertBefore(w, card);
+          w.appendChild(card);
+        } else {
+          const el = card.querySelector(".card-section .card-section-title, .card-section h5, .card-section");
+          if (el && el.firstChild) el.firstChild.remove();
+        }
+      });
+    };
+    document.addEventListener("DOMContentLoaded", () =>
+      new MutationObserver(touch).observe(document.body, { childList: true, subtree: true }));
+  }, mode);
+}
 if (process.env.WHERE) {
   // log which node React failed to remove, and where it sits
   await page.addInitScript(() => {
