@@ -2234,11 +2234,28 @@
     // "after" patch the card and other plugins' patches render as they would
     // without this plugin, and outside an infinite list the result is
     // returned untouched.
+    //
+    // An "after" patch gets the component's arguments followed by the result,
+    // joined with concat, so an array result arrives spread out (or not at
+    // all, if empty). A "before" patch notes the arguments, so the result can
+    // be told apart from them even when another plugin changed their number.
+    const cardArgs = {};
     for (const name of CARD_COMPONENTS) {
-      api.patch.after(name, function (props, ...rest) {
-        // Stash appends the result with concat, which spreads an array that an
-        // earlier patch returned; React itself always passes two arguments
-        const rendered = rest.length > 2 ? rest.slice(1) : lastArg(rest);
+      cardArgs[name] = [];
+      api.patch.before(name, function (...args) {
+        const stack = cardArgs[name];
+        // a render that threw between the two patches leaves an entry behind
+        if (stack.length > 20) stack.length = 0;
+        stack.push(args);
+        return args;
+      });
+      api.patch.after(name, function (...all) {
+        const props = all[0];
+        const args = cardArgs[name].pop();
+        // React passes two arguments, if a later "before" patch changed them
+        const n = args && args.length <= all.length && args.every((a, i) => all[i] === a) ? args.length : 2;
+        const parts = all.slice(n);
+        const rendered = parts.length === 1 ? parts[0] : parts;
         const ctl = React.useContext(WindowCtx);
         if (!ctl) return rendered;
         const id = cardId(props);
