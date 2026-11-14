@@ -2269,7 +2269,7 @@
     // the arguments don't match, or a match leaves something React can't
     // draw, the result is told apart from them by being something React can
     // draw, and another recorder is added. A match whose result first comes
-    // in several parts, or in more parts than before, also adds one, in case
+    // in several parts, or in more parts than ever before, also adds one, in case
     // a kept function added a drawable argument (that render draws it beside
     // the card; the next one doesn't).
     const cardArgs = {};
@@ -2301,7 +2301,7 @@
     // recorders added here, not counting those added for other plugins'
     // "before" patches, so other plugins can't use up the limit
     const extraRecorders = {};
-    const lastParts = {};
+    const mostParts = {};
     const recordAgain = (name) => {
       if ((extraRecorders[name] || 0) >= 3) return;
       extraRecorders[name] = (extraRecorders[name] || 0) + 1;
@@ -2318,15 +2318,14 @@
         let i = all.length;
         while (i > 1 && drawable(all[i - 1])) i--;
         parts = all.slice(i);
-      } else if (parts.length > 1 && !(parts.length <= lastParts[name])) {
-        // first seen in several parts, or more than before
+        // the fallback can't tell leading empties from React's own empty
+        // second argument; they draw nothing, so drop them
+        while (parts.length > 1 && (parts[0] == null || typeof parts[0] === "boolean")) parts.shift();
+      } else if (parts.length > 1 && !(parts.length <= mostParts[name])) {
+        // first seen in several parts, or more than ever before
+        mostParts[name] = parts.length;
         recordAgain(name);
       }
-      lastParts[name] = parts.length;
-      // leading empties draw nothing. Dropping them on both paths keeps the
-      // result's shape the same whichever one a render takes (the fallback
-      // can't tell them from React's own empty second argument)
-      while (parts.length > 1 && (parts[0] == null || typeof parts[0] === "boolean")) parts.shift();
       return parts.length === 1 ? parts[0] : parts;
     };
     for (const name of CARD_COMPONENTS) {
