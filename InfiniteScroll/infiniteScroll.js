@@ -2243,18 +2243,30 @@
     // all, if empty), and other plugins' "before" patches can change how many
     // arguments there are. A "before" patch of ours notes the arguments, so
     // the result can be split off exactly. It only sees the final arguments if
-    // it runs last, so when a "before" patch registered after it changes them,
-    // another one is added (now last) and, for that render, the result is
-    // told apart from the arguments by being something React can draw.
+    // it runs last, so whenever another plugin later adds a "before" patch to
+    // a card, another one of ours is added right after it. Should the
+    // arguments still not match (a plugin that kept Stash's function from
+    // before ours replaced it), the result is told apart from them by being
+    // something React can draw, and another recorder is added.
     const cardArgs = {};
     const recorders = {};
+    const nativeBefore = api.patch.before;
     const addRecorder = (name) => {
       recorders[name] = (recorders[name] || 0) + 1;
-      api.patch.before(name, function (...args) {
+      nativeBefore.call(api.patch, name, function (...args) {
         cardArgs[name] = args;
         return args;
       });
     };
+    try {
+      api.patch.before = function (component) {
+        const ret = nativeBefore.apply(this, arguments);
+        if (CARD_COMPONENTS.includes(component)) addRecorder(component);
+        return ret;
+      };
+    } catch (e) {
+      // read-only: the fallback below still applies
+    }
     // what React can draw. Arguments are props, React's second argument
     // (legacy context, a plain object, for these plain function components)
     // and whatever other plugins add; none of those that matter can be drawn

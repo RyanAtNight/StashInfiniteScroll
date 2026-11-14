@@ -11,7 +11,8 @@
 //                 on GalleryCard and TagCard an array result, on StudioCard
 //                 one holding a portal. Registered after Infinite Scroll:
 //                 "before" patches passing props alone (PerformerCard,
-//                 GalleryCard, StudioCard) and adding an argument (TagCard).
+//                 GalleryCard, StudioCard) and adding arguments (TagCard: an
+//                 object, a number, an array holding an object).
 //                 Also loads before Infinite Scroll.
 //   iscTestLater  registers "instead" patches after Infinite Scroll, written
 //                 the way Stash's docs show: (props, _, Original).
@@ -82,7 +83,10 @@ const STANDINS = {
   const late = () => {
     if (!window.InfiniteScrollDebug) return setTimeout(late, 20);
     for (const n of ["PerformerCard", "GalleryCard"]) api.patch.before(n, (props) => [props]);
+    // (drawable ones too: a number, and an array holding an object)
     api.patch.before("TagCard", (...args) => args.concat({ iscTest: 1 }));
+    api.patch.before("TagCard", (...args) => [...args, 123]);
+    api.patch.before("TagCard", (...args) => [...args, [{ iscTest: 2 }]]);
     api.patch.before("StudioCard", (props) => [props]);
   };
   // a portal (not a valid element to React.isValidElement) next to each studio card
@@ -324,9 +328,11 @@ try {
     const r = await page.evaluate(() => ({
       cards: document.querySelectorAll(".isc-list .tag-card").length,
       badged: [...document.querySelectorAll(".isc-list .tag-card")].filter((c) => c.closest(".isc-cell")?.querySelector(":scope > .isc-test-badge")).length,
+      // an argument drawn beside the card would show up as stray text in its cell
+      stray: [...document.querySelectorAll(".isc-list .isc-cell")].filter((c) => [...c.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim())).length,
     }));
     const bad = await crashed();
-    result(!bad && r.cards > 0 && r.badged === r.cards && !errors.length, "another plugin's array result survives a later before patch adding an argument", `${r.badged}/${r.cards} cards with their badge${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    result(!bad && r.cards > 0 && r.badged === r.cards && !r.stray && !errors.length, "another plugin's array result survives later before patches adding arguments", `${r.badged}/${r.cards} cards with their badge, ${r.stray} cells with stray text${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   removeAll();
