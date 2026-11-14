@@ -974,6 +974,26 @@
     return undefined;
   }
 
+  // The element in a cell that stands for the card. Usually its only child;
+  // another plugin's patch can put more next to it (a badge), so then the
+  // largest one in the flow.
+  function cardElement(cell) {
+    const kids = cell.children;
+    if (kids.length < 2) return kids[0] || null;
+    let best = null;
+    let area = -1;
+    for (const c of kids) {
+      const pos = window.getComputedStyle(c).position;
+      if (pos === "absolute" || pos === "fixed") continue;
+      const r = c.getBoundingClientRect();
+      if (r.width * r.height > area) {
+        best = c;
+        area = r.width * r.height;
+      }
+    }
+    return best || kids[0];
+  }
+
   function WindowedCard({ ctl, id, props: givenProps, rendered: givenRendered }) {
     const latest = id && ctl.latest.get(id);
     const props = latest ? latest.props : givenProps;
@@ -986,7 +1006,7 @@
     const enabled = ctl.enabled && !!id;
 
     React.useLayoutEffect(() => {
-      const el = show ? ref.current && ref.current.firstElementChild : ref.current;
+      const el = show ? ref.current && cardElement(ref.current) : ref.current;
       if (!el) return undefined;
       if (show) {
         el.setAttribute("data-isc-item", "");
@@ -2270,10 +2290,10 @@
     // what React can draw. Arguments are props, React's second argument
     // (legacy context, a plain object, for these plain function components)
     // and whatever other plugins add; none of those that matter can be drawn
-    // (elements and portals both carry a symbol $$typeof)
+    const DRAWABLE_TYPES = ["react.element", "react.transitional.element", "react.portal", "react.lazy"].map((k) => Symbol.for(k));
     const drawable = (v) =>
       v == null || typeof v === "string" || typeof v === "number" || typeof v === "boolean" ||
-      Array.isArray(v) || (typeof v === "object" && typeof v.$$typeof === "symbol");
+      (typeof v === "object" && (DRAWABLE_TYPES.includes(v.$$typeof) || typeof v[Symbol.iterator] === "function"));
     const cardResult = (name, all) => {
       const args = cardArgs[name];
       cardArgs[name] = undefined;
@@ -2285,6 +2305,9 @@
         let i = all.length;
         while (i > 1 && drawable(all[i - 1])) i--;
         parts = all.slice(i);
+        // leading empties draw nothing, and dropping them keeps the result's
+        // shape the same as once the recorder above takes over
+        while (parts.length > 1 && (parts[0] == null || typeof parts[0] === "boolean")) parts.shift();
       }
       return parts.length === 1 ? parts[0] : parts;
     };

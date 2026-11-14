@@ -9,7 +9,7 @@
 //                 "after" patch returning an array (the card plus a badge);
 //                 on PerformerCard an "after" patch returning [] (no card);
 //                 on GalleryCard and TagCard an array result, on StudioCard
-//                 one holding a portal. Registered after Infinite Scroll:
+//                 one holding a portal, on ImageCard a small element first. Registered after Infinite Scroll:
 //                 "before" patches passing props alone (PerformerCard,
 //                 GalleryCard, StudioCard) and adding arguments (TagCard: an
 //                 object, a number, an array holding an object).
@@ -89,6 +89,14 @@ const STANDINS = {
     api.patch.before("TagCard", (...args) => [...args, [{ iscTest: 2 }]]);
     api.patch.before("StudioCard", (props) => [props]);
   };
+  // a small element in the flow before each image card
+  api.patch.after("ImageCard", function (props, ...rest) {
+    const result = rest[rest.length - 1];
+    return [
+      h("span", { key: "dot", className: "isc-test-dot", style: { display: "inline-block", width: 4, height: 4 } }),
+      React.cloneElement(result, { key: "card" }),
+    ];
+  });
   // a portal (not a valid element to React.isValidElement) next to each studio card
   api.patch.after("StudioCard", function (props, ...rest) {
     const result = rest[rest.length - 1];
@@ -288,6 +296,25 @@ try {
     const ok = order && !bad && first.first === "card+badge" && far.first === "placeholder" && back.first === "card+badge" &&
       [first, far, back].every((c) => c.badges === c.cards);
     result(ok, "another plugin's array result (after a before patch with one argument) survives placeholders", `${order ? "" : "stand-in loaded after Infinite Scroll; "}first item ${first.first} -> ${far.first} -> ${back.first}; cards/badges ${first.cards}/${first.badges}, ${far.cards}/${far.badges}, ${back.cards}/${back.badges}${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  {
+    // with a small sibling before each card, the card itself is measured
+    const { page, errors, crashed } = await open("/images");
+    const first = () => page.evaluate(() => {
+      const el = document.querySelector(".isc-list [data-isc-item]");
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { what: el.classList.contains("isc-ph") ? "placeholder" : el.classList.contains("image-card") ? "card" : el.className || el.tagName, w: Math.round(r.width), h: Math.round(r.height) };
+    });
+    const before = await first();
+    await page.mouse.move(640, 400);
+    for (let i = 0; i < 40; i++) { await page.mouse.wheel(0, 1500); await page.waitForTimeout(150); }
+    await page.waitForTimeout(1500);
+    const far = await first();
+    const bad = await crashed();
+    const ok = !bad && before && before.what === "card" && far && far.what === "placeholder" && Math.abs(far.w - before.w) <= 2 && Math.abs(far.h - before.h) <= 2;
+    result(ok, "with another plugin's element before each card, placeholders take the card's size", `first item ${before && before.what} ${before && before.w}x${before && before.h} -> ${far && far.what} ${far && far.w}x${far && far.h}${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   {
