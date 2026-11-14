@@ -9,10 +9,14 @@
 //                 "after" patch returning an array (the card plus a badge);
 //                 on PerformerCard an "after" patch returning [] (no card);
 //                 on GalleryCard and TagCard an array result, on StudioCard
-//                 one holding a portal, on ImageCard a small element first. Registered after Infinite Scroll:
-//                 "before" patches passing props alone (PerformerCard,
-//                 GalleryCard, StudioCard) and adding arguments (TagCard: an
-//                 object, a number, an array holding an object).
+//                 one holding a portal, on ImageCard a small element first.
+//                 Registered after Infinite Scroll: "before" patches passing
+//                 props alone (PerformerCard, GalleryCard) and adding
+//                 arguments (TagCard: an object, a number, an array holding
+//                 an object); and through Stash's own patch.before, kept
+//                 before Infinite Scroll wraps it, one passing props alone
+//                 (StudioCard), one adding a number (GalleryCard) and one
+//                 adding an array holding an object (StudioCard).
 //                 Also loads before Infinite Scroll.
 //   iscTestLater  registers "instead" patches after Infinite Scroll, written
 //                 the way Stash's docs show: (props, _, Original).
@@ -55,6 +59,8 @@ const STANDINS = {
   const api = window.PluginApi, React = api.React, h = React.createElement;
   // these checks only mean something if this registers before Infinite Scroll
   (window.__iscTestFirst = window.__iscTestFirst || {})["iscTestAfter"] = !window.InfiniteScrollDebug;
+  // Stash's own function, kept before Infinite Scroll wraps it
+  const keptBefore = api.patch.before;
   // a "before" patch that drops React's second argument
   api.patch.before("SceneCard", function (props) {
     return [props];
@@ -87,7 +93,10 @@ const STANDINS = {
     api.patch.before("TagCard", (...args) => args.concat({ iscTest: 1 }));
     api.patch.before("TagCard", (...args) => [...args, 123]);
     api.patch.before("TagCard", (...args) => [...args, [{ iscTest: 2 }]]);
-    api.patch.before("StudioCard", (props) => [props]);
+    // through the kept function, which Infinite Scroll doesn't see
+    keptBefore("StudioCard", (props) => [props]);
+    keptBefore("StudioCard", (...args) => [...args, [{ iscTest: 3 }]]);
+    keptBefore("GalleryCard", (...args) => [...args, 123]);
   };
   // a small element in the flow before each image card
   api.patch.after("ImageCard", function (props, ...rest) {
@@ -333,20 +342,22 @@ try {
     const r = await page.evaluate(() => ({
       cards: document.querySelectorAll(".isc-list .gallery-card").length,
       badged: [...document.querySelectorAll(".isc-list .gallery-card")].filter((c) => c.closest(".isc-cell")?.querySelector(":scope > .isc-test-badge")).length,
+      stray: [...document.querySelectorAll(".isc-list .isc-cell")].filter((c) => [...c.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim())).length,
     }));
     const bad = await crashed();
-    result(!bad && r.cards > 0 && r.badged === r.cards && !errors.length, "another plugin's array result survives a later before patch passing props alone", `${r.badged}/${r.cards} cards with their badge${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    result(!bad && r.cards > 0 && r.badged === r.cards && !r.stray && !errors.length, "another plugin's array result survives a later before patch passing props alone, and one adding a number through Stash's kept function", `${r.badged}/${r.cards} cards with their badge, ${r.stray} cells with stray text${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   {
-    // a portal in another plugin's result, with a later "before" patch
+    // a portal in another plugin's result, with a later "before" patch made
+    // through Stash's kept function
     const { page, errors, crashed } = await open("/studios", { ready: ".isc-list .studio-card" });
     const r = await page.evaluate(() => ({
       cards: document.querySelectorAll(".isc-list .studio-card").length,
       portals: document.querySelectorAll("body > .isc-test-portal").length,
     }));
     const bad = await crashed();
-    result(!bad && r.cards > 0 && r.portals === r.cards && !errors.length, "another plugin's portal survives a later before patch passing props alone", `${r.portals} portals for ${r.cards} cards${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
+    result(!bad && r.cards > 0 && r.portals === r.cards && !errors.length, "another plugin's portal survives a later before patch passing props alone and one adding an array through Stash's kept function", `${r.portals} portals for ${r.cards} cards${bad ? ", crashed" : ""}${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
   {

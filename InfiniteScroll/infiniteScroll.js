@@ -2264,15 +2264,17 @@
     // arguments there are. A "before" patch of ours notes the arguments, so
     // the result can be split off exactly. It only sees the final arguments if
     // it runs last, so whenever another plugin later adds a "before" patch to
-    // a card, another one of ours is added right after it. Should the
-    // arguments still not match (a plugin that kept Stash's function from
-    // before ours replaced it), the result is told apart from them by being
-    // something React can draw, and another recorder is added.
+    // a card, another one of ours is added right after it. A plugin that kept
+    // Stash's function from before ours replaced it gets past that, so when
+    // the arguments don't match, or a match leaves something React can't
+    // draw, the result is told apart from them by being something React can
+    // draw, and another recorder is added. A match whose result first comes
+    // in several parts, or in more parts than before, also adds one, in case
+    // a kept function added a drawable argument (that render draws it beside
+    // the card; the next one doesn't).
     const cardArgs = {};
-    const recorders = {};
     const nativeBefore = api.patch.before;
     const addRecorder = (name) => {
-      recorders[name] = (recorders[name] || 0) + 1;
       nativeBefore.call(api.patch, name, function (...args) {
         cardArgs[name] = args;
         return args;
@@ -2291,24 +2293,40 @@
     // (legacy context, a plain object, for these plain function components)
     // and whatever other plugins add; none of those that matter can be drawn
     const DRAWABLE_TYPES = ["react.element", "react.transitional.element", "react.portal", "react.lazy"].map((k) => Symbol.for(k));
-    const drawable = (v) =>
+    const drawable = (v, depth = 0) =>
       v == null || typeof v === "string" || typeof v === "number" || typeof v === "boolean" ||
-      (typeof v === "object" && (DRAWABLE_TYPES.includes(v.$$typeof) || typeof v[Symbol.iterator] === "function"));
+      (typeof v === "object" &&
+        (DRAWABLE_TYPES.includes(v.$$typeof) ||
+          (Array.isArray(v) ? depth < 8 && v.every((x) => drawable(x, depth + 1)) : typeof v[Symbol.iterator] === "function")));
+    // recorders added here, not counting those added for other plugins'
+    // "before" patches, so other plugins can't use up the limit
+    const extraRecorders = {};
+    const lastParts = {};
+    const recordAgain = (name) => {
+      if ((extraRecorders[name] || 0) >= 3) return;
+      extraRecorders[name] = (extraRecorders[name] || 0) + 1;
+      addRecorder(name);
+    };
     const cardResult = (name, all) => {
       const args = cardArgs[name];
       cardArgs[name] = undefined;
       let parts = args && args.length <= all.length && args.every((a, i) => all[i] === a) ? all.slice(args.length) : null;
       // a later patch that added an argument still matches at the start
-      if (!parts || !parts.every(drawable)) {
-        if (recorders[name] < 3) addRecorder(name);
+      if (!parts || !parts.every((v) => drawable(v))) {
+        recordAgain(name);
         // the result is the drawable run at the end
         let i = all.length;
         while (i > 1 && drawable(all[i - 1])) i--;
         parts = all.slice(i);
-        // leading empties draw nothing, and dropping them keeps the result's
-        // shape the same as once the recorder above takes over
-        while (parts.length > 1 && (parts[0] == null || typeof parts[0] === "boolean")) parts.shift();
+      } else if (parts.length > 1 && !(parts.length <= lastParts[name])) {
+        // first seen in several parts, or more than before
+        recordAgain(name);
       }
+      lastParts[name] = parts.length;
+      // leading empties draw nothing. Dropping them on both paths keeps the
+      // result's shape the same whichever one a render takes (the fallback
+      // can't tell them from React's own empty second argument)
+      while (parts.length > 1 && (parts[0] == null || typeof parts[0] === "boolean")) parts.shift();
       return parts.length === 1 ? parts[0] : parts;
     };
     for (const name of CARD_COMPONENTS) {
