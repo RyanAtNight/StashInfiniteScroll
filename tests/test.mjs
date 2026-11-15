@@ -456,6 +456,34 @@ await test("setting: disable in Grid view", async (res) => {
   }
 });
 
+// 11b. settings: the load-ahead distance, in percent of a screen and as saved by older versions (in screens)
+await test("setting: load-ahead distance", async (res) => {
+  const atRest = async (input) => {
+    await gql(`mutation($i: Map!) { configurePlugin(plugin_id: "InfiniteScroll", input: $i) }`, { i: input });
+    await open("/images?sortby=path&sortdir=asc");
+    let s = await state();
+    for (let i = 0, same = 0; i < 40 && same < 5; i++) {
+      await sleep(200);
+      const n = await state();
+      same = n.items === s.items ? same + 1 : 0;
+      s = n;
+    }
+    return s.items;
+  };
+  try {
+    const normal = await atRest({});
+    const percent = await atRest({ prefetchPercent: 600 });
+    const screens = await atRest({ prefetchScreens: 6 });
+    const both = await atRest({ prefetchPercent: 150, prefetchScreens: 6 });
+    res.data = { normal, percent, screens, both };
+    check(res, percent > normal, `600% loaded ${percent} at rest, no more than the default's ${normal}`);
+    check(res, screens === percent, `6 screens (old setting) loaded ${screens}, 600% loaded ${percent}`);
+    check(res, both === normal, `the percent setting didn't win over the old one (${both}, default ${normal})`);
+  } finally {
+    await gql(`mutation { configurePlugin(plugin_id: "InfiniteScroll", input: { disableGrid: false }) }`);
+  }
+});
+
 // 12. hover previews still play inside the infinite list
 await test("hover preview plays", async (res) => {
   await open("/scenes?sortby=title&sortdir=asc");

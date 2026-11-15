@@ -62,8 +62,9 @@ node record-demo.mjs 9931                                        # writes .sandb
 12. The back-to-top button.
 13. Phone-width window.
 14. The "Disable in Grid view" setting gives Stash's normal pages back.
-15. Hover previews still play.
-16. Reloading mid-list keeps the position.
+15. A longer load-ahead distance loads more before you scroll, and a distance saved by 1.1.4 or older (in screens) still counts until the percent one is set.
+16. Hover previews still play.
+17. Reloading mid-list keeps the position.
 
 ## How scrolling feels
 

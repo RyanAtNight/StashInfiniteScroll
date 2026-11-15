@@ -105,7 +105,9 @@
     hidePageJumper: false,
     disableWindowing: false,
     disablePinnedHeader: false,
-    prefetchScreens: 1.5,
+    // percent of a screen: Stash's own number box drops decimals, so "1.5
+    // screens" couldn't be typed
+    prefetchPercent: 150,
     taggerConfirmThreshold: 0,
   };
 
@@ -136,6 +138,12 @@
         } else {
           settings[k] = !!v;
         }
+      }
+      // until 1.1.4 the distance was set in screens; a value saved then
+      // still counts until the percent one is set
+      const screens = Number(cfg.prefetchScreens);
+      if (!(Number(cfg.prefetchPercent) > 0) && Number.isFinite(screens) && screens > 0) {
+        settings.prefetchPercent = screens * 100;
       }
     } catch (e) {
       console.warn(LOG_PREFIX, "could not load settings", e);
@@ -2226,7 +2234,7 @@
         const screen = scroller ? scroller.clientHeight : vh;
         const lead = Math.min(
           MAX_LEAD_SCREENS * screen,
-          Math.max(settings.prefetchScreens * screen, currentSpeed() * LEAD_SECONDS)
+          Math.max((settings.prefetchPercent / 100) * screen,currentSpeed() * LEAD_SECONDS)
         );
         let below;
         let nearTop;
