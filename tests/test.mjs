@@ -327,6 +327,95 @@ await test("off-screen cards are swapped and restored", async (res) => {
   await page.setViewportSize({ width: 1280, height: 800 });
 });
 
+// 8b. Drawn cards sit out the list update a new batch causes and catch up
+// later, so their click handlers are briefly a batch behind; a click must
+// still act on the list as it is now. Shift-click is the handler that reads it.
+await test("shift-click right after loading selects the range", async (res) => {
+  await open("/scenes?sortby=title&sortdir=asc");
+  const t = await scrollTarget();
+  await page.mouse.move(t.x, t.y);
+  await page.evaluate(() => { const c = document.querySelector(".scene-card .card-check"); c && c.click(); });
+  await sleep(400);
+  for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 500); await sleep(80); }
+  const target = await page.evaluate(() => {
+    const all = [...document.querySelectorAll(".isc-list [data-isc-item]")];
+    for (let i = all.length - 1; i >= 0; i--) {
+      const box = all[i].querySelector(".card-check");
+      if (!box) continue;
+      const r = box.getBoundingClientRect();
+      if (r.top > 300 && r.bottom < innerHeight - 20) return { index: i, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+    return null;
+  });
+  check(res, !!target, "no card to shift-click");
+  if (target) {
+    await page.keyboard.down("Shift");
+    await page.mouse.click(target.x, target.y);
+    await page.keyboard.up("Shift");
+    await sleep(600);
+    const info = await page.evaluate(() => (document.querySelector(".selected-items-info") || {}).innerText || "");
+    const n = Number((info.match(/\d+/) || [0])[0]);
+    res.data = { target, info };
+    check(res, n === target.index + 1, `selected ${n}, expected ${target.index + 1}`);
+  }
+  await page.evaluate(() => { const b = document.querySelector(".selected-items-info button"); b && b.click(); });
+});
+
+// 8c. The cards of a new batch start as empty boxes the size of their
+// neighbours and are drawn a few per frame: none may be left empty on screen,
+// and the boxes must be the size of the list's cards.
+for (const path of ["/performers?sortby=name&sortdir=asc", "/scenes?sortby=title&sortdir=asc", "/images?sortby=path&sortdir=asc"]) await test(`new cards start as placeholders and get drawn ${path.split("?")[0]}`, async (res) => {
+  await open(path);
+  const t = await scrollTarget();
+  await page.mouse.move(t.x, t.y);
+  let sizes = null;
+  for (let i = 0; i < 12; i++) {
+    await page.mouse.wheel(0, 700);
+    await sleep(60);
+    sizes = sizes || (await page.evaluate(() => {
+      const box = document.querySelector(".isc-list .isc-ph");
+      const card = document.querySelector(".isc-list [data-isc-item]:not(.isc-ph)");
+      if (!box || !card) return null;
+      const a = box.getBoundingClientRect(), b = card.getBoundingClientRect();
+      return { box: [Math.round(a.width), Math.round(a.height)], card: [Math.round(b.width), Math.round(b.height)] };
+    }));
+  }
+  await sleep(1500);
+  const left = await page.evaluate(() => [...document.querySelectorAll(".isc-ph")].filter((p) => { const r = p.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; }).length);
+  res.data = { sizes, emptyOnScreen: left };
+  check(res, left === 0, `${left} cards still empty on screen after a pause`);
+  // (cards of one list can differ a little in height: a row of counts or not)
+  check(res, !sizes || (Math.abs(sizes.box[0] - sizes.card[0]) <= 1 && Math.abs(sizes.box[1] - sizes.card[1]) <= sizes.card[1] * 0.2), `placeholder ${sizes && sizes.box} but card ${sizes && sizes.card}`);
+});
+
+// 8d. Card pictures that are slow to arrive (a slow disk, thumbnails still to
+// be made) must not use up the browser's connections: they load a few at a
+// time, and loading more items goes on meanwhile.
+await test("slow pictures load a few at a time and loading goes on", async (res) => {
+  const thumb = /\/image\/\d+\/thumbnail/;
+  const pending = new Set();
+  let most = 0;
+  const onRequest = (r) => { if (thumb.test(r.url())) { pending.add(r); most = Math.max(most, pending.size); } };
+  const onDone = (r) => pending.delete(r);
+  page.on("request", onRequest);
+  page.on("requestfinished", onDone);
+  page.on("requestfailed", onDone);
+  await page.route(thumb, async (route) => { await sleep(1200); route.continue().catch(() => {}); });
+  try {
+    await open("/images?sortby=path&sortdir=asc");
+    const t0 = Date.now();
+    const s = await wheelToEnd();
+    res.data = { most, items: s.items, total: s.total, ms: Date.now() - t0 };
+    check(res, s.items === s.total, `loaded ${s.items} of ${s.total} with slow pictures`);
+    check(res, most > 0 && most <= 4, `${most} pictures loading at once`);
+  } finally {
+    await page.unroute(thumb);
+    page.off("request", onRequest);
+    page.off("requestfinished", onDone);
+    page.off("requestfailed", onDone);
+  }
+});
+
 // 9. back-to-top button
 await test("back to top", async (res) => {
   await open("/images?sortby=path&sortdir=asc");

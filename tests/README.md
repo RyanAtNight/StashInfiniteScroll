@@ -56,8 +56,33 @@ node record-demo.mjs 9931                                        # writes .sandb
 6. Changing the sort starts a fresh list.
 7. The image lightbox loads more images as you step through.
 8. Off-screen cards turn into placeholders and come back.
-9. The back-to-top button.
-10. Phone-width window.
-11. The "Disable in Grid view" setting gives Stash's normal pages back.
-12. Hover previews still play.
-13. Reloading mid-list keeps the position.
+9. Shift-click right after more has loaded selects the whole range (drawn cards skip the list update a new batch causes, so their click handlers are briefly a batch behind).
+10. The cards of a new batch start as placeholders the size of the list's cards, and none is left empty on screen.
+11. With every thumbnail held back 1.2 s, at most four load at once and the list still loads to its end.
+12. The back-to-top button.
+13. Phone-width window.
+14. The "Disable in Grid view" setting gives Stash's normal pages back.
+15. Hover previews still play.
+16. Reloading mid-list keeps the position.
+
+## How scrolling feels
+
+`perf.mjs` scrolls a list at a steady pace, the way a mouse wheel does, and reports what a person would notice: late frames, how long the picture stood still, empty cards on screen and time spent waiting at the bottom.
+
+```sh
+node perf-lab.mjs media <clips folder> .sandbox/perf-media   # once: 504 scenes and 672 photo-sized images from the demo clips
+node perf-lab.mjs start main 9960 .sandbox/perf-media        # a Stash with those and 600 performers; leave running
+node perf.mjs 9960 /performers                               # three runs, then a summary line
+```
+
+- `PACE` is rows of cards per second, so the experience is the same whatever the card size (default 6; 2 is brisk, 5 is fast).
+- `CPU=4` slows the page's main thread four times, standing in for a much slower PC.
+- `DELAY=150` holds every picture back that long, standing in for a slow disk.
+- `PROFILE=1` and `TRACE=1` say where the time went (by script, and by kind of browser work).
+- Each run starts in a new browser profile, with a real GPU, and the wheel keeps turning on the clock even while the page is busy.
+
+In the summary, `over33` and `over100` count frames that took longer than that many ms, `stuckMsPerS` is how long the picture stood still per second of scrolling, `blankPct` is how often an empty card was on screen, `noPicPct` how often a drawn card on screen was still without its picture, and `waitPct` how often the view sat at the bottom waiting. Each is the middle of the runs with the range. Each run's own line also has `gqlQueuedMs`: how long the plugin's requests for more items waited for a free connection.
+
+For a slow disk, build the media on it (or copy it there) and start a second lab on that folder with `NO_THUMBS=1`, so Stash has to read the originals to make each thumbnail as it's first shown. Empty that lab's `generated/thumbnails` folder before each run to repeat it.
+
+`node perf-lab.mjs plugins 9960 install list.json` installs other plugins from their sources (`[{ "id": "...", "source": "https://.../index.yml" }]`), and `plugins 9960 on|off list.json` switches them, to measure next to them. `GENERATED=<folder>` at the first start puts Stash's generated files on another disk, and `NO_THUMBS=1` leaves image thumbnails to be made as they're first shown.

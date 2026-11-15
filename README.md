@@ -18,7 +18,7 @@ A [Stash](https://github.com/stashapp/stash) UI plugin that replaces page button
 | v0.31.1 | Tested |
 | v0.30 and older | Not tested |
 
-Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. Version 1.1.3 was re-checked on 2026-11-13 on v0.31.1 and v0.32.0, also next to stand-in plugins that patch the same cards and lists the way Hover Cards and Stash's plugin examples do. The plugin has no dependencies and doesn't need any other plugin.
+Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. Version 1.1.3 was re-checked on 2026-11-13 on v0.31.1 and v0.32.0, also next to stand-in plugins that patch the same cards and lists the way Hover Cards and Stash's plugin examples do. The smoother-scrolling changes that followed were checked on 2026-11-14 on both versions (37 checks), next to the same stand-ins, and measured with and without the 21 other plugins one user runs. The plugin has no dependencies and doesn't need any other plugin.
 
 If a Stash update removes something the plugin relies on, that part switches itself off and Stash's normal pages are used, so the worst case is ordinary pagination rather than a broken page.
 
@@ -77,7 +77,10 @@ To update, replace the folder with the new one and repeat steps 3 and 4. To unin
 ### Staying fast
 
 - **Grid cards** far off-screen (more than 3 screens away) are swapped for empty boxes of the same size. With 700 scenes loaded, about 100 cards are actually rendered. The tagger is never affected, so its search results and matches are kept.
-- **Cards coming back into range are drawn a few per frame**, nearest to the screen first, within about 8 ms a frame, instead of all at once in one long frame.
+- **Cards are drawn a few per frame**, nearest to the screen first, within about 8 ms a frame, instead of all at once in one long frame. That goes for cards coming back into range and for the cards of a new batch, which start as empty boxes the size of their neighbours.
+- **A new batch doesn't redraw the cards already there.** Stash re-renders the whole list when more arrives; cards whose own data hasn't changed keep what they show and catch up once scrolling pauses, or just before a click or key press.
+- **Batches that land together are added together.** When fast scrolling has several loading at once, they cost one list update instead of one each.
+- **Card pictures load four at a time**, those on screen first. A browser opens about 6 connections to Stash, and pictures that are slow to arrive (thumbnails Stash still has to make, a slow or sleeping disk) used to fill all of them, leaving the request for the next batch waiting in line. The picture of a card you've scrolled far past before its turn is never asked for.
 - **Previews wait while you scroll fast.** "Fast" is more than one screen height a second, so it means the same thing at every zoom level. Previews you fly past are never downloaded and don't hold up loading (browsers only open about 6 connections to Stash at once); about 0.15 s after you slow down, the ones on screen start playing.
 - **Only on-screen preview videos play.** In Wall view, videos within half a screen stay loaded but paused, so they resume instantly when scrolled back into view; those further away are unloaded. Card previews that have played are unloaded when they move away and reload only when played again.
 - **The address bar** is updated without telling Stash's router. Otherwise Stash would treat each new page as a filter change and redo work for every loaded item.
@@ -122,6 +125,6 @@ Stash's lists render whatever their GraphQL query returns. The plugin adds a rea
 The plugin also patches:
 
 - **The list renderers** (`SceneList`, `ImageList`, …): the loading markers, position tracking and the queue and lightbox fixes.
-- **The card components:** the off-screen placeholders.
+- **The card components:** the off-screen placeholders, and the order their pictures load in (a picture waiting for its turn has its `src` held back).
 - **`Pagination` and `PaginationIndex`:** the page buttons and the counter.
 - **`HTMLMediaElement.play`**, only for videos inside an infinite list, and only while scrolling fast: holding previews back.
