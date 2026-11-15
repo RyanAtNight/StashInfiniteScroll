@@ -51,20 +51,23 @@ node record-demo.mjs 9931                                        # writes .sandb
 1. Every list type and the lists on studio, performer, tag, group and gallery pages load all their items, without duplicates, with the end marker, the page number in the address bar, and a pinned toolbar that stays clickable (below the name bar on detail pages).
 2. List, Wall and Tagger views load everything.
 3. Going back from a scene returns to the same card with everything loaded.
-4. A link to a later page offers "Load earlier results" without the view jumping.
-5. Select all covers every loaded item.
-6. Changing the sort starts a fresh list.
-7. The image lightbox loads more images as you step through.
-8. Off-screen cards turn into placeholders and come back.
-9. Shift-click right after more has loaded selects the whole range (drawn cards skip the list update a new batch causes, so their click handlers are briefly a batch behind).
-10. The cards of a new batch start as placeholders the size of the list's cards, and none is left empty on screen.
-11. With every thumbnail held back 1.2 s, at most four load at once and the list still loads to its end.
-12. The back-to-top button.
-13. Phone-width window.
-14. The "Disable in Grid view" setting gives Stash's normal pages back.
-15. A longer load-ahead distance loads more before you scroll, and a distance saved by 1.1.4 or older (in screens) still counts until the percent one is set.
-16. Hover previews still play.
-17. Reloading mid-list keeps the position.
+4. A scan finishing while you're part of the way down leaves the view where it was, in Grid, List, Wall and Tagger views and for images, and the rest still loads. (Stash empties its cache when a scan finishes and fetches one page again; the list used to shrink to that page, which left the view at the top.)
+5. The cache being emptied while a batch is still loading (Apollo then fails that request): the list keeps what it shows and its place, and loads on once the retry time has passed. This check adds a few expected console errors to the report.
+6. The same when the scan finishes while a scene is open: going back returns to the same card.
+7. A link to a later page offers "Load earlier results" without the view jumping.
+8. Select all covers every loaded item.
+9. Changing the sort starts a fresh list.
+10. The image lightbox loads more images as you step through.
+11. Off-screen cards turn into placeholders and come back.
+12. Shift-click right after more has loaded selects the whole range (drawn cards skip the list update a new batch causes, so their click handlers are briefly a batch behind).
+13. The cards of a new batch start as placeholders the size of the list's cards, and none is left empty on screen.
+14. With every thumbnail held back 1.2 s, at most four load at once and the list still loads to its end.
+15. The back-to-top button.
+16. Phone-width window.
+17. The "Disable in Grid view" setting gives Stash's normal pages back.
+18. A longer load-ahead distance loads more before you scroll, and a distance saved by 1.1.4 or older (in screens) still counts until the percent one is set.
+19. Hover previews still play.
+20. Reloading mid-list keeps the position.
 
 ## How scrolling feels
 

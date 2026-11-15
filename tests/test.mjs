@@ -221,6 +221,146 @@ await test("back from a scene keeps position", async (res) => {
   check(res, after.top !== null && Math.abs(after.top - before.top) < 60, `clicked card moved from ${before.top} to ${after.top}`);
 });
 
+// 3b. Stash empties its cache when a scan finishes and fetches one page again: the list must not shrink to
+// that page (which leaves the view at the top) while the plugin fetches the rest again
+const scanAndWait = async () => {
+  // Stash tells the page a moment after the job ends, sometimes seconds later: wait for the reset itself,
+  // or it lands in the middle of whatever comes next
+  await page.evaluate(() => {
+    window.__resets = 0;
+    if (window.__resetHook) return;
+    window.__resetHook = true;
+    window.PluginApi.utils.StashService.getClient().onResetStore(async () => { window.__resets++; });
+  });
+  await gql("mutation { metadataScan(input: {}) }");
+  let resets = 0;
+  for (let i = 0; i < 200 && !resets; i++) {
+    await sleep(100);
+    resets = await page.evaluate(() => window.__resets);
+  }
+  if (!resets) throw new Error("the scan didn't make Stash reset its cache within 20 s");
+  await sleep(1500);
+};
+// where the view is: the page's scroll position plus that of a list that scrolls inside its own box
+const position = () => page.evaluate(() => {
+  let inner = 0;
+  for (const el of document.querySelectorAll(".isc-list *")) {
+    if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight + 1) inner = Math.max(inner, el.scrollTop);
+  }
+  return Math.round(scrollY + inner);
+});
+const watchLowest = () => page.evaluate(() => {
+  window.__low = Infinity;
+  if (window.__lowFn) return;
+  window.__lowFn = (e) => {
+    const t = e.target;
+    const y = t === document || t === document.documentElement ? scrollY : t.scrollTop;
+    window.__low = Math.min(window.__low, y);
+  };
+  document.addEventListener("scroll", window.__lowFn, { capture: true, passive: true });
+});
+for (const [what, path] of [
+  ["scenes grid", "/scenes?sortby=title&sortdir=asc"],
+  ["scenes list", "/scenes?sortby=title&sortdir=asc&disp=1"],
+  ["scenes wall", "/scenes?sortby=title&sortdir=asc&disp=2"],
+  ["scenes tagger", "/scenes?sortby=title&sortdir=asc&disp=3"],
+  ["images grid", "/images?sortby=path&sortdir=asc"],
+]) {
+  await test(`a scan finishing keeps the position: ${what}`, async (res) => {
+    await open(path);
+    const t = await scrollTarget();
+    await page.mouse.move(t.x, t.y);
+    // part of the way down, with more left to load
+    for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 500); await sleep(150); }
+    await sleep(1200);
+    const s1 = await state();
+    const y1 = await position();
+    await watchLowest();
+    await scanAndWait();
+    const s2 = await state();
+    const y2 = await position();
+    const low = await page.evaluate(() => window.__low);
+    res.data = { y1, y2, low, itemsBefore: s1.items, itemsAfter: s2.items, total: s1.total };
+    check(res, y1 > 500, `only scrolled to ${y1}`);
+    check(res, s1.items > 14, `only ${s1.items} items loaded before the scan`);
+    check(res, Math.abs(y2 - y1) < 5, `view moved from ${y1} to ${y2}`);
+    check(res, low === null || low === Infinity || low > y1 - 5, `view was at ${low} on the way (from ${y1})`);
+    check(res, s2.items === s1.items, `items went from ${s1.items} to ${s2.items}`);
+    // and it's the real list again: the rest still loads
+    const end = await wheelToEnd();
+    res.data.final = end.items;
+    if (end.items !== end.total) {
+      res.data.stuck = await page.evaluate(() => {
+        const r = [...window.InfiniteScrollDebug.activeLists][0];
+        const s = r.st;
+        return { first: s.first, last: s.last, run: [s.run.first, s.run.last, s.run.length], refreshing: s.refreshing, error: String(s.error || ""), inflight: [...s.inflight], landed: s.landed.length, count: s.count, shown: r.itemCount };
+      });
+    }
+    check(res, end.items === end.total, `afterwards loaded ${end.items} of ${end.total} ${JSON.stringify(res.data.stuck || "")}`);
+    const dups = await dupCheck();
+    check(res, dups && dups.dups.length === 0, `duplicates afterwards: ${dups && dups.dups}`);
+  });
+}
+
+// 3b2. the cache is emptied while a batch is on its way: Apollo fails that request, and the list has to fetch
+// the missing pages again once the retry time has passed (it used to stay one batch long for good)
+await test("a cache reset while a batch is loading recovers", async (res) => {
+  await open("/images?sortby=path&sortdir=asc");
+  await page.mouse.move(640, 500);
+  for (let i = 0; i < 6; i++) { await page.mouse.wheel(0, 500); await sleep(150); }
+  await sleep(1200);
+  const s1 = await state();
+  let slow = true;
+  const hold = async (route) => { if (slow) await sleep(700); route.continue().catch(() => {}); };
+  await page.route("**/graphql", hold);
+  try {
+    for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, 700); await sleep(60); }
+    await sleep(150);
+    const loading = await page.evaluate(() => [...window.InfiniteScrollDebug.activeLists][0].st.inflight.size);
+    const y1 = await position();
+    await watchLowest();
+    await page.evaluate(() => { window.PluginApi.utils.StashService.getClient().resetStore().catch(() => {}); });
+    slow = false;
+    let least = s1.items;
+    for (let i = 0; i < 80; i++) { await sleep(100); least = Math.min(least, (await state()).items); }
+    const low = await page.evaluate(() => window.__low);
+    const end = await wheelToEnd();
+    res.data = { itemsBefore: s1.items, loading, y1, low, least, final: end.items, total: end.total };
+    check(res, loading > 0, "no batch was loading when the cache was reset");
+    check(res, least >= s1.items, `the list shrank to ${least} items (from ${s1.items})`);
+    check(res, low === null || low === Infinity || low > y1 - 100, `view was at ${low} on the way (from ${y1})`);
+    check(res, end.items === end.total, `afterwards loaded ${end.items} of ${end.total}`);
+  } finally {
+    await page.unroute("**/graphql", hold);
+  }
+});
+
+// 3c. the same while the list isn't on screen: back from a scene after a scan finished there
+await test("back from a scene after a scan keeps position", async (res) => {
+  await open("/scenes?sortby=title&sortdir=asc");
+  await wheelToEnd();
+  await page.evaluate(() => window.scrollTo(0, 1600));
+  await sleep(800);
+  const before = await page.evaluate(() => {
+    const card = [...document.querySelectorAll(".scene-card")].find((x) => { const b = x.getBoundingClientRect(); return b.top > 250 && b.bottom < innerHeight - 50; });
+    const a = card && card.querySelector("a[href*='/scenes/']");
+    const first = a && document.querySelector(`.scene-card a[href="${a.getAttribute("href")}"]`);
+    return a && { href: a.getAttribute("href"), top: Math.round(first.getBoundingClientRect().top), y: Math.round(scrollY) };
+  });
+  const s1 = await state();
+  await page.click(`.scene-card a[href="${before.href}"]`);
+  await page.waitForURL(/\/scenes\/\d+/);
+  await sleep(1000);
+  await scanAndWait();
+  await page.goBack();
+  await sleep(3000);
+  const after = await page.evaluate((href) => { const a = document.querySelector(`.scene-card a[href="${href}"]`); return { top: a ? Math.round(a.getBoundingClientRect().top) : null, y: Math.round(scrollY) }; }, before.href);
+  const s2 = await state();
+  res.data = { before, after, itemsBefore: s1.items, itemsAfter: s2.items };
+  check(res, s2.items === s1.items, `items went from ${s1.items} to ${s2.items}`);
+  check(res, after.top !== null && Math.abs(after.top - before.top) < 60, `clicked card moved from ${before.top} to ${after.top}`);
+});
+
 // 4. opening a link to a later page offers the earlier ones
 await test("link to page 4 loads earlier on demand", async (res) => {
   await open("/scenes?sortby=title&sortdir=asc&p=4");

@@ -18,7 +18,7 @@ A [Stash](https://github.com/stashapp/stash) UI plugin that replaces page button
 | v0.31.1 | Tested |
 | v0.30 and older | Not tested |
 
-Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. Version 1.1.3 was re-checked on 2026-11-13 on v0.31.1 and v0.32.0, also next to stand-in plugins that patch the same cards and lists the way Hover Cards and Stash's plugin examples do. Version 1.1.4 (smoother scrolling) was checked on 2026-11-14 on both versions (37 checks), next to the same stand-ins, and its scrolling was measured with and without the 21 other plugins one user runs. Version 1.1.5 (load-ahead distance in percent) was checked the same way on 2026-11-14 (38 checks). The plugin has no dependencies and doesn't need any other plugin.
+Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. Version 1.1.3 was re-checked on 2026-11-13 on v0.31.1 and v0.32.0, also next to stand-in plugins that patch the same cards and lists the way Hover Cards and Stash's plugin examples do. Version 1.1.4 (smoother scrolling) was checked on 2026-11-14 on both versions (37 checks), next to the same stand-ins, and its scrolling was measured with and without the 21 other plugins one user runs. Version 1.1.5 (load-ahead distance in percent, and keeping your place when a scan finishes) was checked the same way on 2026-11-14 (45 checks). The plugin has no dependencies and doesn't need any other plugin.
 
 If a Stash update removes something the plugin relies on, that part switches itself off and Stash's normal pages are used, so the worst case is ordinary pagination rather than a broken page.
 
@@ -64,7 +64,7 @@ To update, replace the folder with the new one and repeat steps 3 and 4. To unin
 ### Keeping the data right
 
 - **Items added or removed while you scroll** (deleting, or tagging scenes out of a "missing StashDB ID" filter) shift every later batch. When the total count changes, the plugin re-fetches everything loaded, in as few requests as possible, so nothing is skipped or shown twice. Your scroll position is kept.
-- **After a library scan**, Stash clears its data cache. The missing batches are fetched again automatically. The same happens after opening a scene, which leaves Stash's cached copy of the list incomplete.
+- **After a library scan**, Stash clears its data cache. The missing batches are fetched again automatically, and until they're back the list keeps showing what it had, so the view stays where it was. The same happens after opening a scene, which leaves Stash's cached copy of the list incomplete.
 - **A failed load** shows a Retry link and is also retried automatically after 5 seconds. A once-a-second check makes sure loading can't silently stop, including the rare case where the list doesn't pick up the last batch that arrived.
 
 ### Stash features that keep working
@@ -105,7 +105,6 @@ Settings take effect when you next open a page.
 
 - **Arrow-key page shortcuts** (← / →) step from the page you arrived on, not the page in view. Use the page buttons instead.
 - **The lightbox counter on v0.31.1** counts loaded images (for example "31 / 42") rather than all results. v0.32.0 shows the full total.
-- **After a library scan**, the restored list can be off by a row.
 - **Browser find (Ctrl+F)** only finds text in rendered cards. Off-screen Grid cards are placeholders.
 - **Where the plugin is switched off** for a view, that view keeps the 14-per-page setting until you change it.
 - **For other plugins' authors:** inside an infinite list, a card far off-screen is swapped for an empty box while your card patch's hooks stay mounted, so an effect that holds on to the card's DOM should re-check its ref.
