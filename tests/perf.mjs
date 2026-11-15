@@ -13,6 +13,8 @@
 //   TRACE=1      also say which kind of browser work it went to (script, layout, paint...)
 //   MOUSE_Y=500  where the pointer rests while the wheel turns (20 = on the top bar, off the cards)
 //   BROWSER_CHANNEL=msedge   another browser (default chrome)
+//   STASH_API_KEY=...        for a Stash that asks for a login (it only scrolls; nothing is changed)
+//   HIDE=<css selector>      remove these elements first (another plugin's overlay in the way)
 //   LABEL=...    a name for the JSON line printed at the end
 import { chromium } from "playwright-core";
 
@@ -29,7 +31,8 @@ const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s
 async function run(i) {
   // a real GPU, as in a visible browser; headless would otherwise draw in software
   const browser = await chromium.launch({ ...(channel ? { channel } : {}), headless: true, args: ["--enable-gpu", "--use-angle=d3d11", "--ignore-gpu-blocklist", "--mute-audio"] });
-  const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  const key = process.env.STASH_API_KEY;
+  const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 }, ...(key ? { extraHTTPHeaders: { ApiKey: key } } : {}) });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e).slice(0, 120)));
@@ -39,6 +42,7 @@ async function run(i) {
   await page.goto(base + path, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".isc-list [data-isc-item], .isc-list .isc-cell, [data-isc-item]", { timeout: 30000 });
   await sleep(4000);
+  if (process.env.HIDE) await page.evaluate((sel) => document.querySelectorAll(sel).forEach((e) => e.remove()), process.env.HIDE);
   await page.mouse.move(800, MY);
   const cdp = await ctx.newCDPSession(page);
   if (CPU > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU });
