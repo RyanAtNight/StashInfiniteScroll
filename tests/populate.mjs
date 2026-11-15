@@ -2,13 +2,18 @@
 // and markers, with big sets on the first of each so their pages need several batches.
 export async function populate(port) {
   const url = `http://127.0.0.1:${port}/graphql`;
-  async function gql(query, variables = {}) {
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, variables }) });
-    const j = await r.json();
-    if (j.errors) throw new Error(JSON.stringify(j.errors));
-    return j.data;
-  }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function gql(query, variables = {}) {
+    for (let attempt = 0; ; attempt++) {
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, variables }) });
+      const j = await r.json();
+      if (!j.errors) return j.data;
+      // SQLite is busy for a moment now and then while Stash finishes its own work
+      const text = JSON.stringify(j.errors);
+      if (attempt >= 10 || !text.includes("database is locked")) throw new Error(text);
+      await sleep(500);
+    }
+  }
   async function waitJobs() {
     for (;;) {
       const d = await gql("{ jobQueue { id status } }");

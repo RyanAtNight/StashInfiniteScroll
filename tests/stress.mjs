@@ -90,11 +90,21 @@ let bad = false;
 for (const path of paths) {
   await page.goto(base + path, { waitUntil: "domcontentloaded" });
   await sleep(2500);
+  // a fresh Stash opens its release notes over the page, and the wheel then scrolls nothing
+  const closed = await page.evaluate(() => {
+    const m = document.querySelector(".modal.show");
+    const b = m && [...m.querySelectorAll("button")].find((x) => /close|ok|dismiss|got it/i.test(x.textContent));
+    if (b) b.click();
+    return !!b;
+  });
+  if (closed) await sleep(600);
   await page.mouse.move(640, 500);
   let n = 0;
+  let deepest = 0;
   for (let r = 0; r < rounds && !bad; r++) {
     // fling down, then jitter, then fling up
     for (let i = 0; i < 25; i++) { await page.mouse.wheel(0, 600 + rand() * 2400); await sleep(rand() * 60); n++; }
+    deepest = Math.max(deepest, await page.evaluate(() => Math.round(scrollY)));
     for (let i = 0; i < 20; i++) {
       await page.mouse.wheel(0, (rand() - 0.5) * 3000);
       await page.mouse.move(100 + rand() * 1080, 150 + rand() * 600);
@@ -105,7 +115,10 @@ for (const path of paths) {
     if (await crashed()) bad = true;
   }
   const items = await page.evaluate(() => { const r = [...(window.InfiniteScrollDebug?.activeLists || [])][0]; return r ? r.itemCount : null; });
-  console.log(`${bad ? "CRASH" : "ok   "} ${path} wheel-steps=${n} items=${items}`);
+  // a run that never moved the page tested nothing
+  const still = !bad && deepest < 500;
+  console.log(`${bad ? "CRASH" : still ? "STILL" : "ok   "} ${path} wheel-steps=${n} items=${items} deepest=${deepest}`);
+  if (still) bad = true;
   if (bad) break;
 }
 for (const e of errors.slice(0, 8)) console.log("ERR", e);
