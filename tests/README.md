@@ -26,13 +26,14 @@ Nothing opens a window while it runs: the sandbox Stash and everything it starts
 
 `node stress.mjs 9912` flings the scene, performer, Wall and image lists up and down and fails on any `removeChild` / `insertBefore` error or Stash's "Something went wrong" screen. `INJECT=translate` makes it rewrite the list's text the way Chrome's page translation does (the cause of the v1.1.0 crash). `INJECT=wrap` wraps each card in a foreign element, as some other plugins do (the cause of the v1.1.1 crash), and `INJECT=remove` deletes an element inside each card. `WHERE=1` logs which element React tripped over.
 
-`node neighbours.mjs 9912` checks the plugin next to others that patch the same components, using three small stand-in plugins it installs and removes again:
+`node neighbours.mjs 9912` checks the plugin next to others that patch the same components, using four small stand-in plugins it installs and removes again:
 
 - one renders the card's other patches inside its own element, as Hover Cards does. Cards already shown must survive a new batch, turn into placeholders of the same size and back, and an image's own page must survive renaming and saving with a wrapped performer card (the v1.1.2 image-page crash);
 - one changes a card's arguments (some of them through Stash's own patch function, kept before Infinite Scroll wraps it) and returns an array, or nothing, from an "after" patch, which must come through whole, through placeholders, with no added argument drawn beside the card;
-- one patches after Infinite Scroll the way Stash's docs show, and must get its next function while loading keeps working.
+- one patches after Infinite Scroll the way Stash's docs show, and must get its next function while loading keeps working;
+- one renders the rest of a list's patches as a component next to an element of its own, as Stash TV does on the scene list. Clicking Scenes in the top bar from another page must open the list without rewriting the address over and over (the v1.1.5 crash next to Stash TV), and a new batch must leave the list and the cards already shown in place.
 
-The first two must load before Infinite Scroll, and the checks fail if they don't.
+The first two and the last must load before Infinite Scroll, and the checks fail if they don't.
 
 The test library is 90 short videos, 120 images (3 of its folders become galleries), 40 performers, 20 studios, 40 tags, 18 groups and 40 markers. The first studio, performer, tag and group hold most of it, so their pages need several batches.
 

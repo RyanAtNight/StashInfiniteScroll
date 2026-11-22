@@ -20,6 +20,10 @@
 //                 Also loads before Infinite Scroll.
 //   iscTestLater  registers "instead" patches after Infinite Scroll, written
 //                 the way Stash's docs show: (props, _, Original).
+//   iscTestListWrap  patches SceneList and PerformerList with "instead" and
+//                 renders the rest of the chain as a component next to an
+//                 element of its own, like Stash TV does on SceneList. Also
+//                 loads before Infinite Scroll.
 //   node neighbours.mjs <port>
 import { chromium } from "playwright-core";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -129,6 +133,17 @@ const STANDINS = {
     }
   };
   go();
+})();`,
+  iscTestListWrap: `(function () {
+  const api = window.PluginApi, React = api.React, h = React.createElement;
+  // these checks only mean something if this registers before Infinite Scroll
+  (window.__iscTestFirst = window.__iscTestFirst || {})["iscTestListWrap"] = !window.InfiniteScrollDebug;
+  for (const n of ["SceneList", "PerformerList"]) {
+    api.patch.instead(n, function (props, ...rest) {
+      const Next = rest[rest.length - 1];
+      return h(React.Fragment, null, h(Next, { ...props }), h("span", { className: "isc-test-list-extra", hidden: true }));
+    });
+  }
 })();`,
 };
 
@@ -258,7 +273,9 @@ try {
       });
       await step("rename and save", async () => {
         await page.locator("#title").first().fill(newTitle);
-        await page.locator("button.edit-button, .edit-buttons button.btn-primary").first().click({ timeout: 5000 });
+        // (by its text: an image with a second file also has a hidden
+        // "Make Primary" button of the same class, on another tab)
+        await page.locator("button.edit-button, .edit-buttons button.btn-primary").filter({ hasText: /^\s*Save\s*$/ }).first().click({ timeout: 5000 });
       });
       await step("details tab", async () => {
         await page.locator('a[data-rb-event-key="image-details-panel"]').first().click({ timeout: 5000 });
@@ -397,6 +414,57 @@ try {
     // every performer, whether the second batch came by itself or by scrolling
     const total = (await gql("{ findPerformers { count } }")).findPerformers.count;
     result(!bad && cards > 0 && more === total && allFns, "a plugin patching after Infinite Scroll gets its next function, and loading continues", `${bad ? "crashed, " : ""}${cards} -> ${more} of ${total} cards, ${JSON.stringify(seen)}${errors.length ? ", " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  removeAll();
+
+  // --- a plugin that renders the rest of a list's patch chain as a component
+  install("iscTestListWrap");
+  await gql("mutation { reloadPlugins }");
+  {
+    // the reported crash: on another page, click Scenes in the top bar. The
+    // list opens at Stash's page size, and switching it to batches rewrote
+    // the address without end.
+    const { page, errors, crashed, firstFor } = await open("/settings", { ready: ".navbar" });
+    const order = await firstFor("iscTestListWrap");
+    await page.evaluate(() => {
+      window.__iscReplaced = 0;
+      const o = history.replaceState.bind(history);
+      history.replaceState = (s, t, u) => { window.__iscReplaced++; return o(s, t, u); };
+    });
+    await page.locator(".top-nav a, .navbar a", { hasText: /^\s*Scenes\s*$/ }).first().click();
+    await page.waitForFunction(() => document.querySelector(".isc-list [data-isc-item]") || /Something went wrong/i.test(document.body.innerText), null, { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    const bad = await crashed();
+    const r = await page.evaluate(() => ({
+      cards: document.querySelectorAll(".isc-list .scene-card").length,
+      extra: document.querySelectorAll(".isc-test-list-extra").length,
+      replaced: window.__iscReplaced,
+      perPage: new URLSearchParams(location.search).get("perPage"),
+    }));
+    result(order && !bad && r.cards > 0 && r.extra === 1 && r.replaced < 10 && !errors.length, "opening Scenes from another page works next to a plugin wrapping the list", `${order ? "" : "stand-in loaded after Infinite Scroll, "}${bad ? "crashed, " : ""}${r.cards} cards, address rewritten ${r.replaced} times, perPage=${r.perPage}${errors.length ? ", " + errors[0] : ""}`);
+    await page.context().close();
+  }
+  for (const [path, card] of [["/scenes", ".scene-card"], ["/performers", ".performer-card"]]) {
+    // and the list isn't rebuilt when a batch arrives
+    const { page, errors, crashed } = await open(path);
+    const loaded = () => page.evaluate(() => { const r = [...(window.InfiniteScrollDebug?.activeLists || [])][0]; return r ? r.itemCount : 0; });
+    const n = await page.evaluate((card) => {
+      window.__iscList = document.querySelector(".isc-list");
+      window.__iscCards = [...document.querySelectorAll(card)];
+      return window.__iscCards.length;
+    }, card);
+    const before = await loaded();
+    await page.mouse.move(640, 400);
+    for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, 300); await page.waitForTimeout(700); }
+    await page.waitForTimeout(2000);
+    const after = await loaded();
+    const r = await page.evaluate(() => ({
+      list: !!window.__iscList && window.__iscList.isConnected,
+      kept: window.__iscCards.filter((c) => c.isConnected).length,
+    }));
+    const bad = await crashed();
+    result(!bad && n > 0 && after > before && r.list && r.kept === n && !errors.length, `a new batch doesn't rebuild a wrapped list: ${path.slice(1)}`, `${bad ? "crashed, " : ""}${before} -> ${after} items, list ${r.list ? "kept" : "rebuilt"}, ${r.kept}/${n} cards kept${errors.length ? ", " + errors[0] : ""}`);
     await page.context().close();
   }
 } finally {

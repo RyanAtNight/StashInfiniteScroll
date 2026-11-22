@@ -123,7 +123,7 @@ Stash's lists render whatever their GraphQL query returns. The plugin adds a rea
 
 The plugin also patches:
 
-- **The list renderers** (`SceneList`, `ImageList`, …): the loading markers, position tracking and the queue and lightbox fixes.
+- **The list renderers** (`SceneList`, `ImageList`, …): the loading markers, position tracking and the queue and lightbox fixes. These are "before" and "after" patches, like the cards', so another plugin's "instead" patch on the same list (Stash TV has one on `SceneList`) runs as it would without this plugin.
 - **The card components:** the off-screen placeholders, and the order their pictures load in (a picture waiting for its turn has its `src` held back).
 - **`Pagination` and `PaginationIndex`:** the page buttons and the counter.
 - **`HTMLMediaElement.play`**, only for videos inside an infinite list, and only while scrolling fast: holding previews back.
