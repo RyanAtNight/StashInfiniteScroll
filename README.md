@@ -14,11 +14,11 @@ A [Stash](https://github.com/stashapp/stash) UI plugin that replaces page button
 | Stash version | Status |
 |---|---|
 | v0.32.0 | Tested |
-| Development build v0.32.0-1-g944dd694 | Tested |
+| Development build v0.32.0-12-g987c211c | Tested |
 | v0.31.1 | Tested |
 | v0.30 and older | Not tested |
 
-Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. Version 1.1.3 was re-checked on 2026-11-13 on v0.31.1 and v0.32.0, also next to stand-in plugins that patch the same cards and lists the way Hover Cards and Stash's plugin examples do. Version 1.1.4 (smoother scrolling) was checked on 2026-11-14 on both versions (37 checks), next to the same stand-ins, and its scrolling was measured with and without the 21 other plugins one user runs. Version 1.1.5 (load-ahead distance in percent, and keeping your place when a scan finishes) was checked the same way on 2026-11-14 (45 checks). The plugin has no dependencies and doesn't need any other plugin.
+Tested on 2026-11-02 in a fresh Stash install with no other plugins, driving a real browser through 32 checks: every list type and view loads all its items without duplicates, the header stays usable, going back and reloading keep your place, old links, Select all, sorting, the lightbox, off-screen placeholders, phone width and the settings. Version 1.1.3 was re-checked on 2026-11-13 on v0.31.1 and v0.32.0, also next to stand-in plugins that patch the same cards and lists the way Hover Cards and Stash's plugin examples do. Version 1.1.4 (smoother scrolling) was checked on 2026-11-14 on both versions (37 checks), next to the same stand-ins, and its scrolling was measured with and without the 21 other plugins one user runs. Version 1.1.5 (load-ahead distance in percent, and keeping your place when a scan finishes) was checked the same way on 2026-11-14 (45 checks). Version 1.1.6 (no crash next to Stash TV) was checked on 2026-11-22 on v0.31.1, v0.32.0 and development build v0.32.0-12-g987c211c, next to a stand-in that wraps lists the way Stash TV does, and on the development build next to Stash TV 2.37.0 itself in Chrome and Firefox. The plugin has no dependencies and doesn't need any other plugin.
 
 If a Stash update removes something the plugin relies on, that part switches itself off and Stash's normal pages are used, so the worst case is ordinary pagination rather than a broken page.
 
